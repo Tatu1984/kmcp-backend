@@ -110,9 +110,24 @@ invariant). Any change to pricing must keep it green.
 
 ## Deploying to Vercel
 
-The repo carries `vercel.json` and `api/index.ts`, which wraps the Nest app in a serverless handler
-and caches it across warm invocations. Import the repo as its own Vercel project and set the
-environment variables from `.env.example`.
+Import the repo as its own Vercel project. Vercel will detect **Nest.js** as the framework — that
+is fine and expected; `vercel.json` supplies the build command and function config regardless. Set
+the environment variables from `.env.example`, and point `CORS_ORIGINS` at the portal's domain.
+
+### Why the entry point is JavaScript
+
+`api/[[...slug]].js` is deliberately plain JS that requires `dist/`, rather than TypeScript that
+imports `src/`.
+
+Vercel's Node builder compiles TypeScript with **esbuild**, and esbuild does not support
+`emitDecoratorMetadata`. NestJS resolves constructor injection from the `design:paramtypes`
+metadata that flag emits, so letting Vercel compile the app strips the DI wiring and every provider
+fails to resolve at runtime. `npm run build` compiles with `tsc`, which does emit it; the entry
+point only wraps the result.
+
+The filename is an optional catch-all so Vercel's filesystem routing maps it to `/api` **and**
+`/api/**`. `/api/v1/health` therefore reaches the function with its original URL intact, with no
+dependence on rewrite semantics.
 
 **Migrations are not part of the build** — they would fire on every preview deploy and can race
 between concurrent builds. Apply them explicitly:
