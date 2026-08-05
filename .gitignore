@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+build/
+
+# env — never commit real credentials
+.env*
+!.env.example
+
+# prisma
+prisma/*.db
+
+# logs
+*.log
+npm-debug.log*
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+*.tsbuildinfo
+
+# vercel
+.vercel/
+
+# office lock files
+~$*

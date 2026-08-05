@@ -1,0 +1,883 @@
+// prisma/schema.prisma  (Prisma 7 — datasource URL lives in prisma.config.ts)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- enums
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  ZONE_OFFICER
+  AUDITOR
+  VENDOR
+  ATTENDANT
+  CITIZEN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BLACKLISTED
+}
+
+enum VendorStatus {
+  PENDING
+  APPROVED
+  SUSPENDED
+  BLOCKED
+}
+
+enum ZoneStatus {
+  OPEN
+  CLOSED
+  MAINTENANCE
+  EVENT_CLOSURE
+}
+
+enum SlotType {
+  TWO_WHEELER
+  CAR
+  THREE_WHEELER
+  COMMERCIAL
+  BUS
+  TRUCK
+  EV
+  VIP
+  GOVERNMENT
+  ACCESSIBLE
+}
+
+enum SlotStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  OUT_OF_SERVICE
+}
+
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  OVERSTAY
+  DISPUTED
+}
+
+enum SessionSource {
+  ATTENDANT_APP
+  OFFLINE_SYNC
+  CITIZEN_APP
+  ADMIN_PORTAL
+}
+
+enum PaymentMode {
+  CASH
+  UPI_QR
+  UPI_INTENT
+  CARD
+  NETBANKING
+  WALLET
+  PASS
+  CORPORATE
+}
+
+enum PaymentStatus {
+  PENDING
+  CAPTURED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+  VERIFIED
+  VARIANCE_FLAGGED
+}
+
+enum SettlementStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PAID
+  FAILED
+}
+
+enum PassStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  PENDING_PAYMENT
+}
+
+enum TariffRuleType {
+  PEAK_HOUR
+  WEEKEND
+  HOLIDAY
+  EVENT
+  NIGHT
+  VIP
+  COMMERCIAL
+  SUBSCRIBER
+}
+
+enum DayType {
+  ALL
+  WEEKDAY
+  WEEKEND
+  HOLIDAY
+}
+
+enum IncidentType {
+  ILLEGAL_PARKING
+  ACCIDENT
+  VEHICLE_DAMAGE
+  PARKING_DISPUTE
+  WRONG_VEHICLE
+  OTHER
+}
+
+enum IncidentStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  REJECTED
+}
+
+enum MediaPurpose {
+  SESSION_EVIDENCE_START
+  SESSION_EVIDENCE_END
+  KYC_DOCUMENT
+  AGREEMENT
+  RECEIPT
+  REPORT_EXPORT
+  INCIDENT_PHOTO
+  PROFILE
+}
+
+enum NotificationChannel {
+  PUSH
+  SMS
+  WHATSAPP
+  EMAIL
+  IN_APP
+}
+
+enum ReportStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// ---------------------------------------------------------------- identity
+model User {
+  id               String     @id @default(cuid())
+  role             UserRole
+  name             String
+  email            String?    @unique
+  phone            String?    @unique
+  passwordHash     String?
+  status           UserStatus @default(ACTIVE)
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean    @default(false)
+  lastLoginAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  deletedAt        DateTime?
+
+  vendor        Vendor?
+  attendant     Attendant?
+  vehicles      Vehicle[]
+  devices       Device[]
+  passes        Pass[]
+  favourites    Favourite[]
+  feedback      Feedback[]
+  notifications Notification[]
+
+  @@index([role, status])
+  @@index([phone])
+}
+
+model Device {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  platform      String // ios | android | web
+  pushToken     String?
+  fingerprint   String
+  boundVendorId String?
+  appVersion    String?
+  lastSeenAt    DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  @@unique([userId, fingerprint])
+  @@index([pushToken])
+}
+
+// ---------------------------------------------------------------- vendor
+model Vendor {
+  id                    String       @id @default(cuid())
+  userId                String       @unique
+  user                  User         @relation(fields: [userId], references: [id])
+  orgName               String
+  contactName           String
+  contactPhone          String
+  gstin                 String?
+  pan                   String?
+  bankAccountName       String?
+  bankAccountNo         String?
+  bankIfsc              String?
+  razorpayContactId     String?
+  razorpayFundAccountId String?
+  commissionPct         Decimal      @db.Decimal(5, 2)
+  rating                Decimal?     @db.Decimal(3, 2)
+  status                VendorStatus @default(PENDING)
+  approvedAt            DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  documents   VendorDocument[]
+  zones       VendorZone[]
+  attendants  Attendant[]
+  sessions    ParkingSession[]
+  shifts      Shift[]
+  settlements Settlement[]
+
+  @@index([status])
+}
+
+model VendorDocument {
+  id         String    @id @default(cuid())
+  vendorId   String
+  vendor     Vendor    @relation(fields: [vendorId], references: [id])
+  type       String // KYC | GST | PAN | AGREEMENT | BANK_PROOF
+  mediaId    String
+  verifiedBy String?
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([vendorId, type])
+}
+
+model VendorZone {
+  id         String    @id @default(cuid())
+  vendorId   String
+  zoneId     String
+  vendor     Vendor    @relation(fields: [vendorId], references: [id])
+  zone       Zone      @relation(fields: [zoneId], references: [id])
+  assignedAt DateTime  @default(now())
+  endedAt    DateTime?
+
+  @@unique([vendorId, zoneId])
+  @@index([zoneId])
+}
+
+model Attendant {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+  vendorId      String
+  vendor        Vendor   @relation(fields: [vendorId], references: [id])
+  employeeCode  String   @unique
+  defaultZoneId String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  shifts   Shift[]
+  sessions ParkingSession[]
+
+  @@index([vendorId, isActive])
+}
+
+// ---------------------------------------------------------------- geography
+model Ward {
+  id      String   @id @default(cuid())
+  code    String   @unique
+  name    String
+  streets Street[]
+  zones   Zone[]
+}
+
+model Street {
+  id     String @id @default(cuid())
+  wardId String
+  ward   Ward   @relation(fields: [wardId], references: [id])
+  name   String
+  zones  Zone[]
+
+  @@index([wardId])
+}
+
+model Zone {
+  id                    String     @id @default(cuid())
+  code                  String     @unique
+  name                  String
+  wardId                String?
+  ward                  Ward?      @relation(fields: [wardId], references: [id])
+  streetId              String?
+  street                Street?    @relation(fields: [streetId], references: [id])
+  centerLat             Float
+  centerLng             Float
+  boundary              Json // GeoJSON Polygon — the geo-fence
+  capacity              Int
+  allowedVehicleTypeIds String[]
+  openTime              String // "06:00"
+  closeTime             String // "22:00"
+  status                ZoneStatus @default(OPEN)
+  closureReason         String?
+  closureUntil          DateTime?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+
+  slots       Slot[]
+  tariffs     Tariff[]
+  sessions    ParkingSession[]
+  vendorZones VendorZone[]
+  shifts      Shift[]
+  favourites  Favourite[]
+
+  @@index([status])
+  @@index([wardId])
+  @@index([centerLat, centerLng])
+}
+
+model Slot {
+  id         String     @id @default(cuid())
+  zoneId     String
+  zone       Zone       @relation(fields: [zoneId], references: [id])
+  code       String
+  type       SlotType
+  status     SlotStatus @default(AVAILABLE)
+  isReserved Boolean    @default(false)
+
+  sessions ParkingSession[]
+
+  @@unique([zoneId, code])
+  @@index([zoneId, status])
+}
+
+// ---------------------------------------------------------------- vehicles & pricing
+model VehicleType {
+  id        String  @id @default(cuid())
+  code      String  @unique // TWO_WHEELER, CAR, BUS …
+  label     String
+  iconKey   String?
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  vehicles Vehicle[]
+  tariffs  Tariff[]
+  sessions ParkingSession[]
+}
+
+model Vehicle {
+  id            String      @id @default(cuid())
+  plateNumber   String      @unique // normalised: WB02AB1234
+  vehicleTypeId String
+  vehicleType   VehicleType @relation(fields: [vehicleTypeId], references: [id])
+  ownerUserId   String?
+  owner         User?       @relation(fields: [ownerUserId], references: [id])
+  makeModel     String?
+  colour        String?
+  isBlacklisted Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  sessions ParkingSession[]
+  passes   Pass[]
+
+  @@index([ownerUserId])
+}
+
+model Tariff {
+  id               String      @id @default(cuid())
+  name             String
+  zoneId           String?
+  zone             Zone?       @relation(fields: [zoneId], references: [id])
+  vehicleTypeId    String
+  vehicleType      VehicleType @relation(fields: [vehicleTypeId], references: [id])
+  baseAmount       Int // paise, covers baseMinutes
+  baseMinutes      Int
+  incrementAmount  Int // paise per incrementMinutes thereafter
+  incrementMinutes Int
+  dailyCapAmount   Int?
+  gracePeriodMin   Int         @default(0)
+  overstayPenalty  Int?
+  taxPercent       Decimal     @default(0) @db.Decimal(5, 2)
+  effectiveFrom    DateTime
+  effectiveTo      DateTime?
+  isPublished      Boolean     @default(false)
+  publishedBy      String?
+  priority         Int         @default(0)
+  createdAt        DateTime    @default(now())
+
+  rules    TariffRule[]
+  sessions ParkingSession[]
+
+  @@index([zoneId, vehicleTypeId, effectiveFrom])
+  @@index([isPublished, effectiveFrom])
+}
+
+model TariffRule {
+  id         String         @id @default(cuid())
+  tariffId   String
+  tariff     Tariff         @relation(fields: [tariffId], references: [id])
+  type       TariffRuleType
+  dayType    DayType        @default(ALL)
+  timeFrom   String? // "08:00"
+  timeTo     String? // "11:00"
+  multiplier Decimal?       @db.Decimal(5, 2)
+  flatAmount Int?
+  priority   Int            @default(0)
+  isActive   Boolean        @default(true)
+
+  @@index([tariffId, type])
+}
+
+model Holiday {
+  id         String   @id @default(cuid())
+  date       DateTime @db.Date
+  name       String
+  isEvent    Boolean  @default(false)
+  zoneIds    String[]
+  multiplier Decimal? @db.Decimal(5, 2)
+
+  @@unique([date, name])
+}
+
+model Discount {
+  id            String   @id @default(cuid())
+  name          String
+  code          String?  @unique
+  zoneId        String?
+  vehicleTypeId String?
+  percentOff    Decimal? @db.Decimal(5, 2)
+  flatOff       Int?
+  validFrom     DateTime
+  validTo       DateTime
+  maxUses       Int?
+  usedCount     Int      @default(0)
+  isActive      Boolean  @default(true)
+}
+
+// ---------------------------------------------------------------- the core
+model ParkingSession {
+  id            String      @id @default(cuid())
+  code          String      @unique // human-quotable, e.g. KMCP-8F3K2Q
+  clientEventId String?     @unique // offline idempotency key
+  zoneId        String
+  zone          Zone        @relation(fields: [zoneId], references: [id])
+  slotId        String?
+  slot          Slot?       @relation(fields: [slotId], references: [id])
+  vehicleId     String
+  vehicle       Vehicle     @relation(fields: [vehicleId], references: [id])
+  plateNumber   String
+  vehicleTypeId String
+  vehicleType   VehicleType @relation(fields: [vehicleTypeId], references: [id])
+  vendorId      String
+  vendor        Vendor      @relation(fields: [vendorId], references: [id])
+  attendantId   String?
+  attendant     Attendant?  @relation(fields: [attendantId], references: [id])
+  shiftId       String?
+  shift         Shift?      @relation(fields: [shiftId], references: [id])
+  tariffId      String?
+  tariff        Tariff?     @relation(fields: [tariffId], references: [id])
+  passId        String?
+  pass          Pass?       @relation(fields: [passId], references: [id])
+
+  status SessionStatus @default(ACTIVE)
+  source SessionSource @default(ATTENDANT_APP)
+
+  startAt         DateTime
+  endAt           DateTime?
+  durationMinutes Int?
+  startLat        Float?
+  startLng        Float?
+  endLat          Float?
+  endLng          Float?
+
+  evidenceStartMediaId String?
+  evidenceEndMediaId   String?
+
+  grossAmount    Int? // paise, before tax/discount
+  discountAmount Int   @default(0)
+  taxAmount      Int   @default(0)
+  penaltyAmount  Int   @default(0)
+  payableAmount  Int? // final, paise
+  fareBreakdown  Json? // line items as computed by tariff.service
+
+  cancelledReason String?
+  syncedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  payments  Payment[]
+  incidents Incident[]
+  feedback  Feedback[]
+
+  @@index([status, zoneId])
+  @@index([plateNumber, status])
+  @@index([vendorId, startAt])
+  @@index([attendantId, startAt])
+  @@index([startAt])
+}
+
+model Media {
+  id           String       @id @default(cuid())
+  key          String       @unique // object storage key
+  bucket       String
+  mimeType     String
+  sizeBytes    Int
+  sha256       String?
+  purpose      MediaPurpose
+  capturedAt   DateTime?
+  lat          Float?
+  lng          Float?
+  uploadedById String?
+  isImmutable  Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  @@index([purpose, createdAt])
+}
+
+// ---------------------------------------------------------------- money
+model Payment {
+  id                     String          @id @default(cuid())
+  sessionId              String?
+  session                ParkingSession? @relation(fields: [sessionId], references: [id])
+  passId                 String?
+  pass                   Pass?           @relation(fields: [passId], references: [id])
+  shiftId                String?
+  shift                  Shift?          @relation(fields: [shiftId], references: [id])
+  mode                   PaymentMode
+  amount                 Int // paise
+  status                 PaymentStatus   @default(PENDING)
+  idempotencyKey         String          @unique
+  gateway                String? // razorpay
+  gatewayOrderId         String?
+  gatewayPaymentId       String?         @unique
+  signatureVerified      Boolean         @default(false)
+  collectedByAttendantId String?
+  paidByUserId           String?
+  paidAt                 DateTime?
+  refundedAmount         Int             @default(0)
+  failureReason          String?
+  createdAt              DateTime        @default(now())
+
+  receipt         Receipt?
+  settlementLines SettlementLine[]
+
+  @@index([status, createdAt])
+  @@index([shiftId])
+  @@index([mode, paidAt])
+}
+
+model Receipt {
+  id           String   @id @default(cuid())
+  paymentId    String   @unique
+  payment      Payment  @relation(fields: [paymentId], references: [id])
+  number       String   @unique
+  gstInvoiceNo String?
+  pdfMediaId   String?
+  issuedAt     DateTime @default(now())
+  sentChannels String[] // sms, whatsapp, email
+}
+
+model Shift {
+  id             String      @id @default(cuid())
+  attendantId    String
+  attendant      Attendant   @relation(fields: [attendantId], references: [id])
+  vendorId       String
+  vendor         Vendor      @relation(fields: [vendorId], references: [id])
+  zoneId         String?
+  zone           Zone?       @relation(fields: [zoneId], references: [id])
+  startAt        DateTime
+  endAt          DateTime?
+  startLat       Float?
+  startLng       Float?
+  endLat         Float?
+  endLng         Float?
+  sessionsCount  Int         @default(0)
+  cashExpected   Int         @default(0)
+  cashDeposited  Int?
+  digitalTotal   Int         @default(0)
+  varianceAmount Int?
+  status         ShiftStatus @default(OPEN)
+  verifiedBy     String?
+  verifiedAt     DateTime?
+
+  sessions ParkingSession[]
+  payments Payment[]
+
+  @@index([attendantId, startAt])
+  @@index([vendorId, status])
+}
+
+// ---------------------------------------------------------------- passes
+model PassPlan {
+  id            String   @id @default(cuid())
+  name          String
+  vehicleTypeId String
+  zoneIds       String[]
+  durationDays  Int
+  price         Int // paise
+  isActive      Boolean  @default(true)
+
+  passes Pass[]
+}
+
+model Pass {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  vehicleId String
+  vehicle   Vehicle    @relation(fields: [vehicleId], references: [id])
+  planId    String
+  plan      PassPlan   @relation(fields: [planId], references: [id])
+  qrCode    String     @unique
+  validFrom DateTime
+  validTo   DateTime
+  status    PassStatus @default(PENDING_PAYMENT)
+  createdAt DateTime   @default(now())
+
+  payments Payment[]
+  sessions ParkingSession[]
+
+  @@index([userId, status])
+  @@index([validTo])
+}
+
+// ---------------------------------------------------------------- settlement
+model Settlement {
+  id               String           @id @default(cuid())
+  vendorId         String
+  vendor           Vendor           @relation(fields: [vendorId], references: [id])
+  periodStart      DateTime
+  periodEnd        DateTime
+  grossCollected   Int
+  cashCollected    Int
+  digitalCollected Int
+  commissionAmount Int
+  vendorShare      Int
+  governmentShare  Int
+  status           SettlementStatus @default(DRAFT)
+  approvedBy       String?
+  approvedAt       DateTime?
+  rejectionReason  String?
+  payoutRef        String?
+  payoutStatus     String?
+  statementMediaId String?
+  createdAt        DateTime         @default(now())
+
+  lines         SettlementLine[]
+  ledgerEntries LedgerEntry[]
+
+  @@unique([vendorId, periodStart, periodEnd])
+  @@index([status])
+}
+
+model SettlementLine {
+  id           String     @id @default(cuid())
+  settlementId String
+  settlement   Settlement @relation(fields: [settlementId], references: [id])
+  paymentId    String
+  payment      Payment    @relation(fields: [paymentId], references: [id])
+  amount       Int
+  commission   Int
+
+  @@unique([settlementId, paymentId])
+}
+
+model LedgerEntry {
+  id           String      @id @default(cuid())
+  settlementId String?
+  settlement   Settlement? @relation(fields: [settlementId], references: [id])
+  account      String // VENDOR_PAYABLE | GOVERNMENT_REVENUE | COMMISSION_INCOME | CASH_IN_HAND | GATEWAY_RECEIVABLE
+  debit        Int         @default(0)
+  credit       Int         @default(0)
+  refType      String
+  refId        String
+  postedAt     DateTime    @default(now())
+
+  @@index([account, postedAt])
+}
+
+// ---------------------------------------------------------------- engagement
+model Favourite {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  zoneId String
+  zone   Zone   @relation(fields: [zoneId], references: [id])
+  label  String // HOME | OFFICE | custom
+
+  @@unique([userId, zoneId])
+}
+
+model Incident {
+  id             String          @id @default(cuid())
+  reportedById   String
+  sessionId      String?
+  session        ParkingSession? @relation(fields: [sessionId], references: [id])
+  zoneId         String?
+  type           IncidentType
+  description    String
+  mediaIds       String[]
+  status         IncidentStatus  @default(OPEN)
+  assignedTo     String?
+  resolutionNote String?
+  resolvedBy     String?
+  resolvedAt     DateTime?
+  createdAt      DateTime        @default(now())
+
+  @@index([status, createdAt])
+  @@index([zoneId])
+}
+
+model Feedback {
+  id        String          @id @default(cuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  sessionId String?
+  session   ParkingSession? @relation(fields: [sessionId], references: [id])
+  vendorId  String?
+  rating    Int // 1..5
+  comment   String?
+  mediaIds  String[]
+  createdAt DateTime        @default(now())
+
+  @@index([vendorId, rating])
+}
+
+model Notification {
+  id          String              @id @default(cuid())
+  userId      String
+  user        User                @relation(fields: [userId], references: [id])
+  channel     NotificationChannel
+  template    String
+  payload     Json
+  status      String // QUEUED | SENT | DELIVERED | FAILED
+  providerRef String?
+  sentAt      DateTime?
+  readAt      DateTime?
+  createdAt   DateTime            @default(now())
+
+  @@index([userId, readAt])
+  @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------- audit & system
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String // SESSION_START, TARIFF_PUBLISH, SETTLEMENT_APPROVE …
+  entity      String
+  entityId    String
+  before      Json?
+  after       Json?
+  ip          String?
+  userAgent   String?
+  deviceId    String?
+  requestId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+}
+
+model LoginLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  identifier String
+  success    Boolean
+  reason     String?
+  ip         String?
+  deviceId   String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model SyncLog {
+  id            String   @id @default(cuid())
+  attendantId   String
+  deviceId      String
+  eventCount    Int
+  acceptedCount Int
+  conflictCount Int
+  payloadHash   String
+  createdAt     DateTime @default(now())
+
+  @@index([attendantId, createdAt])
+}
+
+model SystemConfig {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+model CmsPage {
+  slug        String    @id
+  title       String
+  bodyHtml    String
+  publishedAt DateTime?
+  updatedBy   String?
+  updatedAt   DateTime  @updatedAt
+}
+
+model Faq {
+  id        String  @id @default(cuid())
+  question  String
+  answer    String
+  category  String?
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+}
+
+model Banner {
+  id       String   @id @default(cuid())
+  title    String
+  body     String?
+  imageUrl String?
+  audience String // CITIZEN | VENDOR | ALL
+  startAt  DateTime
+  endAt    DateTime
+  isActive Boolean  @default(true)
+}
+
+model ReportJob {
+  id            String       @id @default(cuid())
+  type          String
+  params        Json
+  status        ReportStatus @default(QUEUED)
+  requestedById String
+  resultMediaId String?
+  error         String?
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+
+  @@index([requestedById, createdAt])
+}
+
+model OtpRequest {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+}
