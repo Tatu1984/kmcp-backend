@@ -22,8 +22,15 @@ auto-recognition is Phase 2 and attaches at the capture step without changing an
 cp .env.example .env      # fill in DATABASE_URL and the two JWT secrets
 npm install
 npm run db:deploy         # apply migrations
+npm run db:seed           # reference data + staff accounts
 npm run dev               # http://localhost:4000/api/v1
 ```
+
+The seed creates the vehicle types, system configuration and four staff accounts
+(`kmcp-demo-2026`, override with `SEED_PASSWORD`). **It is required** — `Tariff.vehicleTypeId`
+and `ParkingSession.vehicleTypeId` are foreign keys to `VehicleType`, whose primary key is its
+own code, so `"CAR"` on the wire resolves to a real row. Without the seed every tariff write
+fails its foreign key.
 
 OpenAPI docs are served at `/api/v1/docs` (and `/api/v1/docs.json` for client generation).
 
