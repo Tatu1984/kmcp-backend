@@ -2,7 +2,7 @@
   "name": "kmcp-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "KMCP — Smart Street Parking Management System. REST API consumed by the Admin Portal, the Vendor app and the Citizen app.",
+  "description": "KMCP \u2014 Smart Street Parking Management System. REST API consumed by the Admin Portal, the Vendor app and the Citizen app.",
   "license": "UNLICENSED",
   "scripts": {
     "build": "prisma generate && nest build",
@@ -56,5 +56,8 @@
     "tsx": "^4.23.7",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "js-yaml": "^5.2.3"
   }
 }
