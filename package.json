@@ -58,6 +58,8 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "js-yaml": "^5.2.3"
+    "@nestjs/swagger": {
+      "js-yaml": "^5.2.3"
+    }
   }
 }
