@@ -23,9 +23,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     });
   }
 
-  async onModuleInit(): Promise<void> {
-    await this.$connect();
-    this.logger.log("Database connected");
+  /**
+   * Deliberately does not `$connect()`.
+   *
+   * Prisma opens a connection on first query anyway. Connecting eagerly here
+   * runs inside Nest's init hooks, so on a serverless cold start a database
+   * that is briefly unreachable takes down the whole function — every route,
+   * including the health probe that exists to tell you what is wrong. Lazy
+   * connection keeps a database outage a database error.
+   */
+  onModuleInit(): void {
+    this.logger.log("Prisma ready (connecting lazily)");
   }
 
   async onModuleDestroy(): Promise<void> {

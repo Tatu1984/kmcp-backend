@@ -14,6 +14,11 @@ import { APP, HEADERS } from "./config/app.constants";
 export async function createApp(): Promise<NestExpressApplication> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
+    // Nest's default is to log a bootstrap failure and call process.exit(1).
+    // Under a serverless host that kills the function before it can answer, so
+    // the caller gets an empty 500 with no CORS headers and no clue why.
+    // Rejecting instead lets the entry point report the actual cause.
+    abortOnError: false,
   });
 
   const config = app.get(ConfigService<Env, true>);
@@ -94,5 +99,10 @@ async function bootstrap(): Promise<void> {
 
 // Skipped when the module is imported by the serverless entry point.
 if (require.main === module) {
-  void bootstrap();
+  // abortOnError is off, so a failed start now rejects rather than exiting the
+  // process. Running locally still wants the non-zero exit code.
+  void bootstrap().catch((error) => {
+    new Logger("Bootstrap").error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
 }
