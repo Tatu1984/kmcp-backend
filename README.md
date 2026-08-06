@@ -110,9 +110,18 @@ invariant). Any change to pricing must keep it green.
 
 ## Deploying to Vercel
 
-Import the repo as its own Vercel project. Vercel will detect **Nest.js** as the framework — that
-is fine and expected; `vercel.json` supplies the build command and function config regardless. Set
-the environment variables from `.env.example`, and point `CORS_ORIGINS` at the portal's domain.
+Import the repo as its own Vercel project. `vercel.json` sets `framework: null`, so no preset is
+applied. Set the environment variables from `.env.example`, and point `CORS_ORIGINS` at the
+portal's domain.
+
+### Why the install command forces dev dependencies
+
+`installCommand` is `npm install --include=dev`, not plain `npm install`.
+
+Setting `NODE_ENV=production` — which you want, so the app does not leak OTP codes in responses —
+makes npm skip `devDependencies`. `@nestjs/cli` provides the `nest` binary the build needs and
+`typescript` provides the compiler, and both are dev dependencies. Without the flag the install
+drops from 582 packages to 322 and the build dies with `nest: command not found`.
 
 ### Why the entry point is JavaScript
 
