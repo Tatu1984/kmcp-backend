@@ -292,6 +292,43 @@ export class AttendantsService {
     return after;
   }
 
+  /**
+   * Releases every device bound to an attendant.
+   *
+   * Device binding is what stops one attendant login being shared around a
+   * team. When a handset is lost or replaced the binding has to be broken
+   * deliberately, by a named person, with a reason — so this is an endpoint of
+   * its own rather than a side effect of editing a record.
+   */
+  async unbindDevices(id: string, reason: string, actor: AuthenticatedUser, ctx: Ctx) {
+    const attendant = await this.prisma.attendant.findUnique({ where: { id }, select: ATTENDANT_SELECT });
+    if (!attendant) throw AppException.notFound("attendant");
+    this.assertOwnership(attendant.vendorId, actor);
+
+    const { count } = await this.prisma.device.updateMany({
+      where: { userId: attendant.userId, isActive: true },
+      data: { isActive: false },
+    });
+
+    // The old device keeps a valid access token until it expires, so the
+    // sessions go too — otherwise "unbound" means "unbound in about an hour".
+    await this.prisma.loginSession.updateMany({
+      where: { userId: attendant.userId, revokedAt: null },
+      data: { revokedAt: new Date(), revokedReason: `Device unbound: ${reason}` },
+    });
+
+    await this.audit.record({
+      actor,
+      action: "ATTENDANT_DEVICE_UNBIND",
+      entity: "Attendant",
+      entityId: id,
+      after: { devicesReleased: count, reason },
+      ...ctx,
+    });
+
+    return { unbound: true, devicesReleased: count };
+  }
+
   /** Moving staff between contractors — the history stays with the attendant. */
   async transfer(id: string, dto: TransferAttendantDto, actor: AuthenticatedUser, ctx: Ctx) {
     const attendant = await this.prisma.attendant.findUnique({ where: { id }, select: ATTENDANT_SELECT });

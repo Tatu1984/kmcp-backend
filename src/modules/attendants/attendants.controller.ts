@@ -21,6 +21,8 @@ import {
   type CreateAttendantDto,
   type TransferAttendantDto,
   type UpdateAttendantDto,
+  UnbindDeviceSchema,
+  type UnbindDeviceDto,
 } from "./dto/attendant.dto";
 
 @ApiTags("Attendants")
@@ -92,6 +94,22 @@ export class AttendantsController {
     @RequestId() requestId: string,
   ) {
     return this.attendants.setActive(id, dto, user, { ...info, requestId });
+  }
+
+  @RequirePermissions("attendant.write")
+  @Post(":id/unbind-device")
+  @ApiOperation({
+    summary: "Release every device bound to an attendant",
+    description: "Their sessions end with it. Use when a handset is lost or replaced.",
+  })
+  unbindDevices(
+    @Param("id") id: string,
+    @Body(zodPipe(UnbindDeviceSchema)) dto: UnbindDeviceDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() info: { ip?: string },
+    @RequestId() requestId: string,
+  ) {
+    return this.attendants.unbindDevices(id, dto.reason, user, { ...info, requestId });
   }
 
   @RequirePermissions("vendor.write")

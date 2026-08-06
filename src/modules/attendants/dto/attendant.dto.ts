@@ -46,3 +46,8 @@ export const TransferAttendantSchema = z.object({
   reason: z.string().trim().min(4, "Say why").max(500),
 });
 export type TransferAttendantDto = z.infer<typeof TransferAttendantSchema>;
+
+export const UnbindDeviceSchema = z.object({
+  reason: z.string().trim().min(4, "Say why — a lost handset and a shared login are not the same").max(500),
+});
+export type UnbindDeviceDto = z.infer<typeof UnbindDeviceSchema>;
