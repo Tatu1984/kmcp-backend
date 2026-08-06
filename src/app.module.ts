@@ -26,6 +26,7 @@ import { SlotsModule } from "./modules/slots/slots.module";
 import { AttendantsModule } from "./modules/attendants/attendants.module";
 import { UsersModule } from "./modules/users/users.module";
 import { SettingsModule } from "./modules/settings/settings.module";
+import { MediaModule } from "./modules/media/media.module";
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { SettingsModule } from "./modules/settings/settings.module";
     AttendantsModule,
     UsersModule,
     SettingsModule,
+    MediaModule,
   ],
   controllers: [HealthController],
   providers: [

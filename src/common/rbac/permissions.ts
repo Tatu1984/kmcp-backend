@@ -51,3 +51,81 @@ export const ZONE_SCOPED_ROLES: UserRole[] = [
 ];
 
 export const isZoneScoped = (role: UserRole): boolean => ZONE_SCOPED_ROLES.includes(role);
+
+/**
+ * Display grouping for the permission matrix screen.
+ *
+ * It lives beside the grants rather than in the portal so there is exactly one
+ * authoritative description of who may do what. A copy in the web app would
+ * drift from the copy that is actually enforced, and the screen would then
+ * confidently show a matrix nothing obeys.
+ */
+export const PERMISSION_GROUPS: {
+  key: string;
+  label: string;
+  permissions: { key: Permission; label: string }[];
+}[] = [
+  {
+    key: "operations",
+    label: "Operations",
+    permissions: [
+      { key: "zone.read", label: "View zones" },
+      { key: "zone.write", label: "Create & edit zones" },
+      { key: "zone.status", label: "Open / close zones" },
+      { key: "slot.write", label: "Manage slots" },
+      { key: "session.read", label: "View parking sessions" },
+      { key: "session.cancel", label: "Cancel a session" },
+      { key: "incident.manage", label: "Manage incidents" },
+    ],
+  },
+  {
+    key: "partners",
+    label: "Partners",
+    permissions: [
+      { key: "vendor.read", label: "View vendors" },
+      { key: "vendor.write", label: "Create & edit vendors" },
+      { key: "vendor.approve", label: "Approve / suspend / block vendors" },
+      { key: "attendant.write", label: "Manage attendants" },
+      { key: "shift.verify", label: "Verify shift deposits" },
+    ],
+  },
+  {
+    key: "pricing",
+    label: "Pricing",
+    permissions: [
+      { key: "tariff.read", label: "View tariffs" },
+      { key: "tariff.write", label: "Draft tariffs" },
+      { key: "tariff.publish", label: "Publish tariffs" },
+      { key: "discount.write", label: "Manage discounts" },
+      { key: "pass.write", label: "Manage pass plans" },
+    ],
+  },
+  {
+    key: "money",
+    label: "Money",
+    permissions: [
+      { key: "payment.read", label: "View payments" },
+      { key: "payment.refund", label: "Issue refunds" },
+      { key: "settlement.read", label: "View settlements" },
+      { key: "settlement.approve", label: "Approve settlements" },
+      { key: "settlement.payout", label: "Instruct payouts" },
+    ],
+  },
+  {
+    key: "governance",
+    label: "Governance",
+    permissions: [
+      { key: "report.generate", label: "Generate reports" },
+      { key: "audit.read", label: "Read audit trail" },
+      { key: "user.manage", label: "Manage users" },
+      { key: "cms.write", label: "Edit public content" },
+      { key: "config.write", label: "Change system configuration" },
+    ],
+  },
+];
+
+/** Every permission in PERMISSIONS must appear in exactly one group. */
+export function ungroupedPermissions(): Permission[] {
+  const grouped = new Set(PERMISSION_GROUPS.flatMap((g) => g.permissions.map((p) => p.key)));
+  return PERMISSIONS.filter((p) => !grouped.has(p));
+}
