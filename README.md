@@ -94,6 +94,60 @@ token into one wasted request rather than persistent access.
 
 ---
 
+## Activity monitor
+
+Every sign-in attempt is recorded with the network, place and device it came from — including
+attempts against accounts that do not exist, so credential stuffing is visible.
+
+| Captured | |
+|---|---|
+| Who | account, name, role, or the identifier tried on a failure |
+| Where | IP, city, locality, region, PIN, country, coordinates, ISP, ASN, VPN/proxy flag |
+| What | browser, OS, device type, fingerprint, device timezone |
+| Verdict | anomalies found and a 0–100 risk score |
+
+Geolocation comes from Vercel's edge headers first (free, no call), then ipinfo when
+`IPINFO_TOKEN` is set, then ip-api as a baseline, refined to a named locality. Every lookup has a
+tight timeout and degrades to unknown — **a slow geo API must never hold up a sign-in.**
+
+### What gets flagged
+
+| Signal | Severity |
+|---|---|
+| `CONCURRENT_SESSION_DIFFERENT_LOCATION` — another live session elsewhere | high |
+| `IMPOSSIBLE_TRAVEL` — faster than a jet between two sign-ins | high |
+| `SUCCESS_AFTER_REPEATED_FAILURES` — five or more failures in the previous 15 minutes | high |
+| `VPN_OR_PROXY` | medium |
+| `TIMEZONE_MISMATCH` — device timezone disagrees with the network's | medium |
+| `NEW_COUNTRY`, `UNUSUAL_LOCALITY` | medium |
+| `NEW_DEVICE` | medium for field accounts, low for office ones |
+
+Concurrent sessions matter most here. An attendant account is meant to be one person, on one
+handset, at one kerb — two live sessions in different cities is the shape account-sharing takes,
+and it is exactly what lets collected cash go unrecorded.
+
+False positives are handled by approving the sign-in, which allowlists that account and IP so the
+same place stops flagging.
+
+```
+GET    /activity/overview                counts, live sessions, top cities, riskiest events
+GET    /activity/events                  full feed, filterable by user, IP, city, risk, date
+GET    /activity/users/:userId           one account: events, sessions, devices, usual places
+GET    /activity/sessions                live sessions, each with its concurrency count
+DELETE /activity/sessions/:sessionId     force a session to end
+POST   /activity/events/:id/approve      trust this account and IP
+GET    /activity/trusted                 the allowlist
+DELETE /activity/trusted/:id             withdraw trust
+GET    /auth/location-consent            your own precise-location consent
+POST   /auth/location-consent            grant or withdraw it
+```
+
+Precise browser GPS is only ever stored with explicit consent, and withdrawing it **erases the
+stored fix** rather than merely stopping new ones — which is what the DPDP Act requires of a
+revocable consent.
+
+---
+
 ## Testing
 
 ```bash

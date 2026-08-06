@@ -1,11 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Req } from "@nestjs/common";
+import type { Request } from "express";
 import { Throttle } from "@nestjs/throttler";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 
 import { zodPipe } from "@/common/pipes/zod-validation.pipe";
 import {
-  ClientInfo,
   CurrentUser,
   Public,
   Roles,
@@ -46,22 +46,16 @@ export class AuthController {
       "Returns tokens directly, or `two_factor_required` with a challenge id when the account " +
       "has an authenticator enrolled. 2FA is mandatory for admin roles.",
   })
-  login(
-    @Body(zodPipe(LoginSchema)) dto: LoginDto,
-    @ClientInfo() info: { ip?: string },
-  ) {
-    return this.auth.login(dto, info.ip);
+  login(@Body(zodPipe(LoginSchema)) dto: LoginDto, @Req() req: Request) {
+    return this.auth.login(dto, req);
   }
 
   @Public()
   @Throttle({ strict: { ttl: 60_000, limit: 10 } })
   @Post("two-factor/verify")
   @ApiOperation({ summary: "Complete sign-in with a 6-digit authenticator code" })
-  verifyTwoFactor(
-    @Body(zodPipe(TwoFactorSchema)) dto: TwoFactorDto,
-    @ClientInfo() info: { ip?: string },
-  ) {
-    return this.auth.verifyTwoFactor(dto, info.ip);
+  verifyTwoFactor(@Body(zodPipe(TwoFactorSchema)) dto: TwoFactorDto, @Req() req: Request) {
+    return this.auth.verifyTwoFactor(dto, req);
   }
 
   @Public()
@@ -82,11 +76,8 @@ export class AuthController {
     summary: "Verify a citizen OTP and sign in",
     description: "Creates the citizen account on first successful verification.",
   })
-  verifyOtp(
-    @Body(zodPipe(OtpVerifySchema)) dto: OtpVerifyDto,
-    @ClientInfo() info: { ip?: string },
-  ) {
-    return this.auth.verifyOtp(dto, info.ip);
+  verifyOtp(@Body(zodPipe(OtpVerifySchema)) dto: OtpVerifyDto, @Req() req: Request) {
+    return this.auth.verifyOtp(dto, req);
   }
 
   @Public()

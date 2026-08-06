@@ -15,6 +15,7 @@ import { JwtAuthGuard } from "./common/guards/jwt-auth.guard";
 import { RbacGuard } from "./common/guards/rbac.guard";
 import { HealthController } from "./health/health.controller";
 import { AuthModule } from "./modules/auth/auth.module";
+import { ActivityModule } from "./modules/activity/activity.module";
 import { ZonesModule } from "./modules/zones/zones.module";
 import { TariffsModule } from "./modules/tariffs/tariffs.module";
 
@@ -40,6 +41,7 @@ import { TariffsModule } from "./modules/tariffs/tariffs.module";
     ScheduleModule.forRoot(),
     PrismaModule,
     CommonModule,
+    ActivityModule,
     AuthModule,
     ZonesModule,
     TariffsModule,

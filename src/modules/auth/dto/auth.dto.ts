@@ -5,6 +5,8 @@ export const LoginSchema = z.object({
   password: z.string().min(6, "Your password is at least 6 characters"),
   deviceFingerprint: z.string().min(8).max(128).optional(),
   platform: z.enum(["web", "ios", "android"]).default("web"),
+  /** Browser timezone. A mismatch against the IP's timezone is a signal. */
+  timezone: z.string().max(64).optional(),
 });
 export type LoginDto = z.infer<typeof LoginSchema>;
 

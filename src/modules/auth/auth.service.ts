@@ -3,7 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import * as bcrypt from "bcryptjs";
 import { generateTotpSecret, totpKeyUri, verifyTotp } from "@/common/utils/totp.util";
-import { UserRole, UserStatus } from "@prisma/client";
+import { AuthEventType, UserRole, UserStatus } from "@prisma/client";
+import type { Request } from "express";
 
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
@@ -12,6 +13,7 @@ import { APP } from "@/config/app.constants";
 import type { Env } from "@/config/env.config";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
 import { TokenService, type TokenPair } from "./token.service";
+import { AuthEventService, type LoginContext } from "@/modules/activity/auth-event.service";
 import type {
   BindDeviceDto,
   ChangePasswordDto,
@@ -33,6 +35,8 @@ export interface LoginResult {
   challengeId?: string;
   tokens?: TokenPair;
   user?: Omit<AuthenticatedUser, "sessionId" | "zoneIds">;
+  /** What the anomaly engine made of this sign-in. */
+  security?: { riskScore: number; anomalies: { code: string; severity: string; detail: string }[] };
 }
 
 @Injectable()
@@ -43,12 +47,15 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly tokens: TokenService,
     private readonly audit: AuditService,
+    private readonly events: AuthEventService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
   // ------------------------------------------------------------------ staff
 
-  async login(dto: LoginDto, ip?: string): Promise<LoginResult> {
+  async login(dto: LoginDto, req: Request): Promise<LoginResult> {
+    const ctx = await this.events.buildContext(req, { timezone: dto.timezone });
+    const ip = ctx.ip;
     const user = await this.prisma.user.findFirst({
       where: { email: dto.email.toLowerCase(), deletedAt: null },
       include: { vendor: { select: { id: true } }, attendant: { select: { id: true } } },
@@ -60,23 +67,27 @@ export class AuthService {
     const passwordOk = await bcrypt.compare(dto.password, hash);
 
     if (!user || !user.passwordHash || !passwordOk) {
-      await this.audit.recordLogin({
-        userId: user?.id,
-        identifier: dto.email,
-        success: false,
-        reason: "Wrong password",
-        ip,
+      await this.events.record({
+        eventType: AuthEventType.LOGIN_FAILED,
+        context: ctx,
+        userId: user?.id ?? null,
+        userName: user?.name ?? null,
+        userRole: user?.role ?? null,
+        identifierTried: dto.email,
+        failureReason: user ? "Wrong password" : "No such account",
       });
       throw new AppException("INVALID_CREDENTIALS");
     }
 
     if (user.status === UserStatus.SUSPENDED || user.status === UserStatus.BLACKLISTED) {
-      await this.audit.recordLogin({
+      await this.events.record({
+        eventType: AuthEventType.LOGIN_FAILED,
+        context: ctx,
         userId: user.id,
-        identifier: dto.email,
-        success: false,
-        reason: "Account suspended",
-        ip,
+        userName: user.name,
+        userRole: user.role,
+        identifierTried: dto.email,
+        failureReason: "Account suspended",
       });
       throw new AppException("ACCOUNT_SUSPENDED");
     }
@@ -95,10 +106,11 @@ export class AuthService {
       return { status: "two_factor_required", challengeId };
     }
 
-    return this.completeLogin(user.id, dto.deviceFingerprint, dto.platform, ip, dto.email);
+    return this.completeLogin(user.id, dto.deviceFingerprint, dto.platform, ctx, dto.email);
   }
 
-  async verifyTwoFactor(dto: TwoFactorDto, ip?: string): Promise<LoginResult> {
+  async verifyTwoFactor(dto: TwoFactorDto, req: Request): Promise<LoginResult> {
+    const ctx = await this.events.buildContext(req);
     const key = `2fa:${dto.challengeId}`;
     const row = await this.prisma.systemConfig.findUnique({ where: { key } });
     if (!row) throw new AppException("OTP_INVALID");
@@ -114,12 +126,14 @@ export class AuthService {
 
     const valid = verifyTotp(dto.code, user.twoFactorSecret);
     if (!valid) {
-      await this.audit.recordLogin({
+      await this.events.record({
+        eventType: AuthEventType.LOGIN_FAILED,
+        context: ctx,
         userId: user.id,
-        identifier: user.email ?? user.id,
-        success: false,
-        reason: "Expired TOTP code",
-        ip,
+        userName: user.name,
+        userRole: user.role,
+        identifierTried: user.email ?? user.id,
+        failureReason: "Wrong or expired authenticator code",
       });
       throw new AppException("OTP_INVALID");
     }
@@ -129,7 +143,7 @@ export class AuthService {
       user.id,
       challenge.deviceFingerprint,
       challenge.platform,
-      ip,
+      ctx,
       user.email ?? user.id,
     );
   }
@@ -138,7 +152,7 @@ export class AuthService {
     userId: string,
     deviceFingerprint: string | undefined,
     platform: string,
-    ip: string | undefined,
+    ctx: LoginContext,
     identifier: string,
   ): Promise<LoginResult> {
     const user = await this.prisma.user.findUniqueOrThrow({
@@ -150,15 +164,37 @@ export class AuthService {
       await this.upsertDevice(user.id, { fingerprint: deviceFingerprint, platform: platform as never });
     }
 
+    // Score the sign-in before issuing tokens, so the event carries the verdict.
+    const { anomalies, riskScore } = await this.events.detectAnomalies({
+      userId: user.id,
+      role: user.role,
+      context: ctx,
+    });
+
     const tokens = await this.tokens.issue(user, deviceFingerprint);
+    const sessionId = this.tokens.sessionIdOf(tokens.accessToken);
 
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    await this.audit.recordLogin({
+
+    await this.events.openSession({
+      sessionId,
       userId: user.id,
-      identifier,
-      success: true,
-      ip,
-      deviceId: deviceFingerprint,
+      userName: user.name,
+      userRole: user.role,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      context: ctx,
+    });
+
+    await this.events.record({
+      eventType: AuthEventType.LOGIN_SUCCESS,
+      context: ctx,
+      userId: user.id,
+      userName: user.name,
+      userRole: user.role,
+      sessionId,
+      identifierTried: identifier,
+      anomalies,
+      riskScore,
     });
 
     return {
@@ -172,6 +208,10 @@ export class AuthService {
         phone: user.phone,
         vendorId: user.vendor?.id ?? user.attendant?.vendorId ?? null,
         attendantId: user.attendant?.id ?? null,
+      },
+      security: {
+        riskScore,
+        anomalies,
       },
     };
   }
@@ -197,7 +237,8 @@ export class AuthService {
     return { sent: true, expiresInSeconds: ttl, ...(isProduction ? {} : { devCode: code }) };
   }
 
-  async verifyOtp(dto: OtpVerifyDto, ip?: string): Promise<LoginResult> {
+  async verifyOtp(dto: OtpVerifyDto, req: Request): Promise<LoginResult> {
+    const ctx = await this.events.buildContext(req);
     const maxAttempts = this.config.get("OTP_MAX_ATTEMPTS", { infer: true });
 
     const request = await this.prisma.otpRequest.findFirst({
@@ -220,11 +261,11 @@ export class AuthService {
         where: { id: request.id },
         data: { attempts: { increment: 1 } },
       });
-      await this.audit.recordLogin({
-        identifier: dto.phone,
-        success: false,
-        reason: "Wrong OTP",
-        ip,
+      await this.events.record({
+        eventType: AuthEventType.LOGIN_FAILED,
+        context: ctx,
+        identifierTried: dto.phone,
+        failureReason: "Wrong OTP",
       });
       throw new AppException("OTP_INVALID");
     }
@@ -257,12 +298,24 @@ export class AuthService {
     }
 
     const tokens = await this.tokens.issue(user, dto.deviceFingerprint);
-    await this.audit.recordLogin({
+    const sessionId = this.tokens.sessionIdOf(tokens.accessToken);
+
+    await this.events.openSession({
+      sessionId,
       userId: user.id,
-      identifier: dto.phone,
-      success: true,
-      ip,
-      deviceId: dto.deviceFingerprint,
+      userName: user.name,
+      userRole: user.role,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      context: ctx,
+    });
+    await this.events.record({
+      eventType: AuthEventType.LOGIN_SUCCESS,
+      context: ctx,
+      userId: user.id,
+      userName: user.name,
+      userRole: user.role,
+      sessionId,
+      identifierTried: dto.phone,
     });
 
     return {
@@ -287,12 +340,14 @@ export class AuthService {
   }
 
   async logout(refreshToken: string): Promise<{ revoked: true }> {
-    await this.tokens.revoke(refreshToken);
+    const sessionId = await this.tokens.revoke(refreshToken);
+    if (sessionId) await this.events.closeSession(sessionId, "Signed out");
     return { revoked: true };
   }
 
   async logoutEverywhere(userId: string): Promise<{ revokedSessions: number }> {
     const revokedSessions = await this.tokens.revokeAllForUser(userId);
+    await this.events.closeAllForUser(userId, "Signed out of every device");
     return { revokedSessions };
   }
 

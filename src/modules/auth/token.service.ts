@@ -140,10 +140,23 @@ export class TokenService {
     return this.issue(user, record.deviceId, record.familyId);
   }
 
-  async revoke(refreshToken: string): Promise<void> {
-    await this.prisma.systemConfig
-      .delete({ where: { key: this.storageKey(refreshToken) } })
-      .catch(() => undefined);
+  /** Returns the session id the token belonged to, so its tracked session closes too. */
+  async revoke(refreshToken: string): Promise<string | null> {
+    const key = this.storageKey(refreshToken);
+    const stored = await this.prisma.systemConfig.findUnique({ where: { key } }).catch(() => null);
+    await this.prisma.systemConfig.delete({ where: { key } }).catch(() => undefined);
+    return stored ? ((stored.value as unknown as RefreshRecord).sessionId ?? null) : null;
+  }
+
+  /** Reads the `sid` claim without verifying — the token was just minted here. */
+  sessionIdOf(accessToken: string): string {
+    try {
+      const payload = accessToken.split(".")[1];
+      const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { sid?: string };
+      return decoded.sid ?? "";
+    } catch {
+      return "";
+    }
   }
 
   async revokeFamily(familyId: string): Promise<void> {

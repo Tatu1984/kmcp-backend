@@ -18,7 +18,10 @@ export interface AuditEntry extends AuditContext {
 }
 
 /**
- * The audit trail is append-only and never fails a request. If writing the
+ * Business-mutation audit trail. Sign-in activity lives in AuthEventService,
+ * which captures the network, location and device context this one does not.
+ *
+ * The trail is append-only and never fails a request. If writing the
  * entry throws we log loudly and let the business operation stand — losing an
  * audit row is bad, but rolling back a citizen's paid parking session is worse.
  */
@@ -52,27 +55,4 @@ export class AuditService {
     }
   }
 
-  async recordLogin(params: {
-    userId?: string | null;
-    identifier: string;
-    success: boolean;
-    reason?: string;
-    ip?: string;
-    deviceId?: string;
-  }): Promise<void> {
-    try {
-      await this.prisma.loginLog.create({
-        data: {
-          userId: params.userId ?? null,
-          identifier: params.identifier,
-          success: params.success,
-          reason: params.reason ?? null,
-          ip: params.ip ?? null,
-          deviceId: params.deviceId ?? null,
-        },
-      });
-    } catch (error) {
-      this.logger.error("Failed to write login log", error instanceof Error ? error.stack : String(error));
-    }
-  }
 }

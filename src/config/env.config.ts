@@ -38,6 +38,9 @@ const schema = z.object({
   WHATSAPP_TOKEN: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
 
+  /** Optional. Adds PIN code, ASN and VPN/proxy detection to sign-in records. */
+  IPINFO_TOKEN: z.string().optional(),
+
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   CRON_SECRET: z.string().optional(),
   SWAGGER_ENABLED: z

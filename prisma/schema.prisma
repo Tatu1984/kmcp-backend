@@ -170,6 +170,21 @@ enum NotificationChannel {
   IN_APP
 }
 
+enum AuthEventType {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  LOGOUT
+  SESSION_EXPIRED
+  SESSION_REVOKED
+  TOKEN_REUSE_DETECTED
+}
+
+enum LocationConsentStatus {
+  PENDING
+  GRANTED
+  DENIED
+}
+
 enum ReportStatus {
   QUEUED
   RUNNING
@@ -794,17 +809,140 @@ model AuditLog {
   @@index([action, createdAt])
 }
 
-model LoginLog {
-  id         String   @id @default(cuid())
-  userId     String?
-  identifier String
-  success    Boolean
-  reason     String?
-  ip         String?
-  deviceId   String?
-  createdAt  DateTime @default(now())
+model AuthEvent {
+  id              String        @id @default(cuid())
+  eventType       AuthEventType
+  userId          String?
+  userName        String?
+  userRole        String?
+  /// Session id baked into the access token issued for this login.
+  sessionId       String?
+  /// Captured even when the account does not exist, so credential stuffing is visible.
+  identifierTried String?
+  failureReason   String?
 
-  @@index([userId, createdAt])
+  // ---- network and IP geolocation
+  ipAddress    String?
+  city         String?
+  /// Locality or neighbourhood within the city.
+  district     String?
+  region       String?
+  /// PIN / ZIP code.
+  postal       String?
+  country      String?
+  latitude     Float?
+  longitude    Float?
+  /// "vercel-ip" | "ipinfo" | "ip-api" | "unknown"
+  geoSource    String?
+  isp          String?
+  asn          String?
+  org          String?
+  isVpnOrProxy Boolean?
+  /// Timezone the IP maps to; a mismatch against clientTimezone is a signal.
+  ipTimezone   String?
+
+  // ---- device
+  userAgent         String?
+  browserName       String?
+  osName            String?
+  deviceType        String?
+  deviceFingerprint String?
+  clientTimezone    String?
+
+  // ---- precise GPS, only once the user consents
+  gpsLatitude  Float?
+  gpsLongitude Float?
+  gpsAccuracyM Float?
+
+  // ---- anomaly detection
+  /// Array<{ code, severity, detail }>
+  anomalies Json?
+  riskScore Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId, eventType])
+  @@index([ipAddress])
+  @@index([deviceFingerprint])
+  @@index([riskScore, createdAt])
+}
+
+model LoginSession {
+  id            String    @id @default(cuid())
+  /// Matches the `sid` claim in the access token.
+  sessionId     String    @unique
+  userId        String
+  userName      String?
+  userRole      String?
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime
+  lastSeenAt    DateTime  @default(now())
+  revokedAt     DateTime?
+  revokedReason String?
+
+  // Snapshot of the login context so the session list is self-contained.
+  ipAddress         String?
+  city              String?
+  district          String?
+  region            String?
+  country           String?
+  latitude          Float?
+  longitude         Float?
+  isp               String?
+  asn               String?
+  isVpnOrProxy      Boolean?
+  deviceFingerprint String?
+  userAgent         String?
+
+  @@index([userId, revokedAt, expiresAt])
+  @@index([lastSeenAt])
+}
+
+model TrustedLoginLocation {
+  id        String  @id @default(cuid())
+  userId    String
+  userName  String?
+  ipAddress String?
+
+  // Location snapshot at approval time, for display in the audit UI.
+  city    String?
+  region  String?
+  country String?
+  asn     String?
+  isp     String?
+
+  /// Optional note, e.g. "ward office".
+  label          String?
+  approvedBy     String?
+  approvedByName String?
+  approvedAt     DateTime @default(now())
+  /// Bumped each time a login arrives from this trusted pair.
+  lastSeenAt     DateTime @default(now())
+
+  @@unique([userId, ipAddress])
+  @@index([userId])
+}
+
+model LocationConsent {
+  id          String                @id @default(cuid())
+  userId      String                @unique
+  userName    String?
+  userRole    String?
+  status      LocationConsentStatus @default(PENDING)
+  respondedAt DateTime?
+
+  // Latest precise fix captured while consent was GRANTED.
+  latitude   Float?
+  longitude  Float?
+  accuracyM  Float?
+  capturedAt DateTime?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
 }
 
 model SyncLog {
