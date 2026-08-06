@@ -20,6 +20,12 @@ import { ZonesModule } from "./modules/zones/zones.module";
 import { TariffsModule } from "./modules/tariffs/tariffs.module";
 import { VendorsModule } from "./modules/vendors/vendors.module";
 import { AuditModule } from "./modules/audit/audit.module";
+import { GeographyModule } from "./modules/geography/geography.module";
+import { VehicleTypesModule } from "./modules/vehicle-types/vehicle-types.module";
+import { SlotsModule } from "./modules/slots/slots.module";
+import { AttendantsModule } from "./modules/attendants/attendants.module";
+import { UsersModule } from "./modules/users/users.module";
+import { SettingsModule } from "./modules/settings/settings.module";
 
 @Module({
   imports: [
@@ -49,6 +55,12 @@ import { AuditModule } from "./modules/audit/audit.module";
     TariffsModule,
     VendorsModule,
     AuditModule,
+    GeographyModule,
+    VehicleTypesModule,
+    SlotsModule,
+    AttendantsModule,
+    UsersModule,
+    SettingsModule,
   ],
   controllers: [HealthController],
   providers: [
