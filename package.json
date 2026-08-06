@@ -60,6 +60,7 @@
   "overrides": {
     "@nestjs/swagger": {
       "js-yaml": "^5.2.3"
-    }
+    },
+    "@scure/base": "^1.2.6"
   }
 }

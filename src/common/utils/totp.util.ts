@@ -5,6 +5,11 @@ import { generateSecret, generateURI, verifySync } from "otplib";
  * directly. otplib 13 replaced the old `authenticator` singleton with free
  * functions; keeping that behind this file means the next such change is a
  * one-file edit.
+ *
+ * Note: package.json pins @scure/base to 1.x. otplib wants 2.x, which is
+ * ESM-only, and Vercel loads the function with a require() that cannot read
+ * ESM — the whole API failed to boot on that alone. Do not lift the pin
+ * without checking the deployed /health, not just a local run.
  */
 
 export const generateTotpSecret = (): string => generateSecret({ length: 20 });
