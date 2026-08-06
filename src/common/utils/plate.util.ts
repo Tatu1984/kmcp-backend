@@ -1,4 +1,16 @@
-import { customAlphabet } from "nanoid";
+import { randomInt } from "node:crypto";
+
+/**
+ * Was nanoid's customAlphabet. nanoid 6 is ESM-only and this file is compiled
+ * to CommonJS, which Vercel's function bundler cannot resolve — the same fault
+ * that kept the whole API from booting. randomInt is drawn from the same CSPRNG
+ * and is unbiased across the alphabet, which is all this was ever used for.
+ */
+const fromAlphabet = (alphabet: string, size: number) => (): string => {
+  let out = "";
+  for (let i = 0; i < size; i += 1) out += alphabet[randomInt(alphabet.length)];
+  return out;
+};
 
 /** Plates are stored and compared normalised: uppercase alphanumeric, no spaces. */
 export const normalisePlate = (plate: string): string =>
@@ -27,12 +39,12 @@ export const isValidPlate = (plate: string): boolean => {
   return p.length >= 6 && p.length <= 12 && PATTERNS.some((re) => re.test(p));
 };
 
-const codeAlphabet = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);
+const codeAlphabet = fromAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6);
 
 /** Human-quotable session code — no ambiguous 0/O or 1/I. */
 export const generateSessionCode = (): string => `KMCP-${codeAlphabet()}`;
 
-const passAlphabet = customAlphabet("0123456789", 5);
+const passAlphabet = fromAlphabet("0123456789", 5);
 export const generatePassCode = (): string => `PASS-${passAlphabet()}`;
 
 export const generateReceiptNumber = (financialYear: string, sequence: number): string =>
