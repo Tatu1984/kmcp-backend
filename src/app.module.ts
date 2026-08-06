@@ -18,6 +18,8 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { ActivityModule } from "./modules/activity/activity.module";
 import { ZonesModule } from "./modules/zones/zones.module";
 import { TariffsModule } from "./modules/tariffs/tariffs.module";
+import { VendorsModule } from "./modules/vendors/vendors.module";
+import { AuditModule } from "./modules/audit/audit.module";
 
 @Module({
   imports: [
@@ -45,6 +47,8 @@ import { TariffsModule } from "./modules/tariffs/tariffs.module";
     AuthModule,
     ZonesModule,
     TariffsModule,
+    VendorsModule,
+    AuditModule,
   ],
   controllers: [HealthController],
   providers: [
