@@ -4,11 +4,17 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install --include=dev",
   "functions": {
-    "api/[[...slug]].js": {
+    "api/index.js": {
       "maxDuration": 30,
       "memory": 1024,
       "includeFiles": "dist/**"
     }
   },
-  "outputDirectory": "public"
+  "outputDirectory": "public",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ]
 }
