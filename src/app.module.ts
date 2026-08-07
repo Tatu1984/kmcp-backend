@@ -28,6 +28,7 @@ import { UsersModule } from "./modules/users/users.module";
 import { SettingsModule } from "./modules/settings/settings.module";
 import { MediaModule } from "./modules/media/media.module";
 import { SessionsModule } from "./modules/sessions/sessions.module";
+import { PaymentsModule } from "./modules/payments/payments.module";
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { SessionsModule } from "./modules/sessions/sessions.module";
     SettingsModule,
     MediaModule,
     SessionsModule,
+    PaymentsModule,
   ],
   controllers: [HealthController],
   providers: [
