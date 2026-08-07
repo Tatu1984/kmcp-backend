@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PrismaClient, SlotType, UserRole, UserStatus } from "@prisma/client";
+import { PrismaClient, SlotType, UserStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import * as bcrypt from "bcryptjs";
 import { seedOperations } from "./seed-operations";
@@ -41,7 +41,7 @@ interface StaffRow {
   email: string;
   name: string;
   phone?: string;
-  role: UserRole;
+  role: string;
 }
 
 async function main() {

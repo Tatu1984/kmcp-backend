@@ -9,16 +9,6 @@ datasource db {
 }
 
 // ---------------------------------------------------------------- enums
-enum UserRole {
-  SUPER_ADMIN
-  ADMIN
-  ZONE_OFFICER
-  AUDITOR
-  VENDOR
-  ATTENDANT
-  CITIZEN
-}
-
 enum UserStatus {
   ACTIVE
   INACTIVE
@@ -193,9 +183,37 @@ enum ReportStatus {
 }
 
 // ---------------------------------------------------------------- identity
+/// A role and the permissions it holds.
+///
+/// Moved out of code and into the database so the authority can grant and
+/// revoke access without a deploy. System roles are seeded and cannot be
+/// deleted — the platform's own guards refer to them by code — but their
+/// permissions are editable like any other, except SUPER_ADMIN which is
+/// unrestricted by definition.
+model Role {
+  code         String   @id
+  label        String
+  description  String?
+  /// Permission keys. Validated against the platform's known list on write.
+  permissions  String[]
+  /// Seeded roles the code refers to by name. Cannot be deleted or recoded.
+  isSystem     Boolean  @default(false)
+  /// Reads for this role are narrowed to the zones it is assigned.
+  isZoneScoped Boolean  @default(false)
+  /// Unrestricted regardless of the permission list. Only SUPER_ADMIN.
+  isSuperuser  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  users User[]
+
+  @@index([isSystem])
+}
+
 model User {
   id               String     @id @default(cuid())
-  role             UserRole
+  role             String
+  roleRef          Role       @relation(fields: [role], references: [code])
   name             String
   email            String?    @unique
   phone            String?    @unique

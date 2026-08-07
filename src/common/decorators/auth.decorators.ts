@@ -1,7 +1,6 @@
 import { SetMetadata, createParamDecorator, type ExecutionContext } from "@nestjs/common";
 import type { Request } from "express";
-import type { UserRole } from "@prisma/client";
-import type { Permission } from "../rbac/permissions";
+import type { Permission, RoleCode } from "../rbac/permissions";
 
 export const IS_PUBLIC_KEY = "kmcp:isPublic";
 export const ROLES_KEY = "kmcp:roles";
@@ -12,7 +11,7 @@ export const SKIP_DEVICE_BINDING_KEY = "kmcp:skipDeviceBinding";
 export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
 
 /** Restrict a route to specific roles. */
-export const Roles = (...roles: UserRole[]) => SetMetadata(ROLES_KEY, roles);
+export const Roles = (...roles: RoleCode[]) => SetMetadata(ROLES_KEY, roles);
 
 /** Restrict a route by permission — preferred over Roles, since RBAC is editable. */
 export const RequirePermissions = (...permissions: Permission[]) =>
@@ -23,7 +22,9 @@ export const SkipDeviceBinding = () => SetMetadata(SKIP_DEVICE_BINDING_KEY, true
 
 export interface AuthenticatedUser {
   id: string;
-  role: UserRole;
+  role: RoleCode;
+  /** Resolved from the role at authentication, so services need no lookup. */
+  isZoneScoped: boolean;
   name: string;
   email?: string | null;
   phone?: string | null;

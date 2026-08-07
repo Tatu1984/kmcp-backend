@@ -1,10 +1,10 @@
 import { Injectable } from "@nestjs/common";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
 import {
   PaymentStatus,
   Prisma,
   SessionStatus,
   SettlementStatus,
-  UserRole,
   UserStatus,
   VendorStatus,
 } from "@prisma/client";
@@ -63,7 +63,7 @@ export class VendorsService {
 
   /** A vendor may only ever see itself. */
   private scope(user: AuthenticatedUser): Prisma.VendorWhereInput {
-    return user.role === UserRole.VENDOR && user.vendorId ? { id: user.vendorId } : {};
+    return user.role === SYSTEM_ROLES.VENDOR && user.vendorId ? { id: user.vendorId } : {};
   }
 
   /** Bank details are masked for everyone except the vendor itself and finance roles. */
@@ -72,9 +72,9 @@ export class VendorsService {
     user: AuthenticatedUser,
   ): T {
     const privileged =
-      user.role === UserRole.SUPER_ADMIN ||
-      user.role === UserRole.ADMIN ||
-      (user.role === UserRole.VENDOR && "id" in vendor && user.vendorId === (vendor as { id: string }).id);
+      user.role === SYSTEM_ROLES.SUPER_ADMIN ||
+      user.role === SYSTEM_ROLES.ADMIN ||
+      (user.role === SYSTEM_ROLES.VENDOR && "id" in vendor && user.vendorId === (vendor as { id: string }).id);
     if (privileged || !vendor.bankAccountNo) return vendor;
     return { ...vendor, bankAccountNo: `•••• ${vendor.bankAccountNo.slice(-4)}` };
   }
@@ -151,7 +151,7 @@ export class VendorsService {
           name: dto.contactName,
           email: dto.email.toLowerCase(),
           phone: dto.contactPhone,
-          role: UserRole.VENDOR,
+          role: SYSTEM_ROLES.VENDOR,
           status: UserStatus.ACTIVE,
           passwordHash: dto.password ? await bcrypt.hash(dto.password, 12) : null,
         },

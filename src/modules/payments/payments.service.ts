@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { PaymentMode, PaymentStatus, Prisma, SessionStatus, UserRole } from "@prisma/client";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
+import { PaymentMode, PaymentStatus, Prisma, SessionStatus } from "@prisma/client";
 
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
@@ -7,7 +8,6 @@ import { AuditService } from "@/common/services/audit.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { financialYear, generateReceiptNumber } from "@/common/utils/plate.util";
-import { isZoneScoped } from "@/common/rbac/permissions";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
 import { RazorpayService } from "./razorpay.service";
 import type {
@@ -74,10 +74,10 @@ export class PaymentsService {
   ) {}
 
   private scopeFilter(user: AuthenticatedUser): Prisma.PaymentWhereInput {
-    if (user.role === UserRole.VENDOR && user.vendorId) {
+    if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) {
       return { session: { vendorId: user.vendorId } };
     }
-    if (isZoneScoped(user.role) && user.zoneIds.length > 0) {
+    if (user.isZoneScoped && user.zoneIds.length > 0) {
       return { session: { zoneId: { in: user.zoneIds } } };
     }
     return {};

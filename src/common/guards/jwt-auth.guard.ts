@@ -1,4 +1,5 @@
 import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
+import { RolesService } from "../rbac/roles.service";
 import { Reflector } from "@nestjs/core";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -32,6 +33,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService<Env, true>,
+    private readonly roles: RolesService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -93,6 +95,8 @@ export class JwtAuthGuard implements CanActivate {
       vendorId: user.vendor?.id ?? user.attendant?.vendorId ?? null,
       attendantId: user.attendant?.id ?? null,
       zoneIds: await this.resolveZoneScope(user.id, user.vendor, user.attendant),
+      // Resolved once here so no service has to ask the database again.
+      isZoneScoped: await this.roles.isZoneScoped(user.role),
       deviceId,
       sessionId: claims.sid,
     };

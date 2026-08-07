@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { SYSTEM_ROLES } from "../src/common/rbac/permissions";
 import { join } from "node:path";
 import {
   PrismaClient,
@@ -7,7 +8,6 @@ import {
   SessionStatus,
   SlotStatus,
   SlotType,
-  UserRole,
   UserStatus,
   VendorStatus,
   ZoneStatus,
@@ -256,7 +256,7 @@ export async function seedOperations(prisma: PrismaClient): Promise<void> {
         name: vendor.contact,
         email: vendor.email,
         phone: vendor.phone,
-        role: UserRole.VENDOR,
+        role: SYSTEM_ROLES.VENDOR,
         status: UserStatus.ACTIVE,
         passwordHash,
       },
@@ -303,7 +303,7 @@ export async function seedOperations(prisma: PrismaClient): Promise<void> {
         id: userId,
         name: attendant.name,
         phone: attendant.phone,
-        role: UserRole.ATTENDANT,
+        role: SYSTEM_ROLES.ATTENDANT,
         status: UserStatus.ACTIVE,
         passwordHash,
       },

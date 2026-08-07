@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma, UserRole, UserStatus } from "@prisma/client";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
+import { Prisma, UserStatus } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 
 import { PrismaService } from "@/prisma/prisma.service";
@@ -61,11 +62,11 @@ export class UsersService {
   /** Refuses anything that would leave the platform with no active Super Admin. */
   private async assertNotLastSuperAdmin(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
-    if (user?.role !== UserRole.SUPER_ADMIN) return;
+    if (user?.role !== SYSTEM_ROLES.SUPER_ADMIN) return;
 
     const remaining = await this.prisma.user.count({
       where: {
-        role: UserRole.SUPER_ADMIN,
+        role: SYSTEM_ROLES.SUPER_ADMIN,
         status: UserStatus.ACTIVE,
         deletedAt: null,
         id: { not: userId },
@@ -149,7 +150,7 @@ export class UsersService {
       select: USER_SELECT,
     });
 
-    if (dto.role === UserRole.ZONE_OFFICER && dto.zoneIds?.length) {
+    if (dto.role === SYSTEM_ROLES.ZONE_OFFICER && dto.zoneIds?.length) {
       await this.setZoneScope(user.id, dto.zoneIds);
     }
 
@@ -216,7 +217,7 @@ export class UsersService {
       data: { revokedAt: new Date(), revokedReason: `Role changed: ${dto.reason}` },
     });
 
-    if (dto.role !== UserRole.ZONE_OFFICER) {
+    if (dto.role !== SYSTEM_ROLES.ZONE_OFFICER) {
       await this.prisma.systemConfig.deleteMany({ where: { key: zoneScopeKey(id) } });
     }
 
@@ -315,7 +316,7 @@ export class UsersService {
   async assignZones(id: string, dto: AssignZonesDto, actor: AuthenticatedUser, ctx: Ctx) {
     const user = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: USER_SELECT });
     if (!user) throw AppException.notFound("user");
-    if (user.role !== UserRole.ZONE_OFFICER) {
+    if (user.role !== SYSTEM_ROLES.ZONE_OFFICER) {
       throw AppException.forbidden("Only a zone officer carries a zone list. Other roles are not zone-scoped.");
     }
 

@@ -1,9 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
 import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import * as bcrypt from "bcryptjs";
 import { generateTotpSecret, totpKeyUri, verifyTotp } from "@/common/utils/totp.util";
-import { AuthEventType, UserRole, UserStatus } from "@prisma/client";
+import { AuthEventType, UserStatus } from "@prisma/client";
 import type { Request } from "express";
 
 import { PrismaService } from "@/prisma/prisma.service";
@@ -34,7 +35,7 @@ export interface LoginResult {
   status: "authenticated" | "two_factor_required";
   challengeId?: string;
   tokens?: TokenPair;
-  user?: Omit<AuthenticatedUser, "sessionId" | "zoneIds">;
+  user?: Omit<AuthenticatedUser, "sessionId" | "zoneIds" | "isZoneScoped">;
   /** What the anomaly engine made of this sign-in. */
   security?: { riskScore: number; anomalies: { code: string; severity: string; detail: string }[] };
 }
@@ -281,7 +282,7 @@ export class AuthService {
       create: {
         phone: dto.phone,
         name: dto.name?.trim() || "Citizen",
-        role: UserRole.CITIZEN,
+        role: SYSTEM_ROLES.CITIZEN,
         status: UserStatus.ACTIVE,
       },
       update: { lastLoginAt: new Date() },

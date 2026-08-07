@@ -1,4 +1,24 @@
-import { UserRole } from "@prisma/client";
+
+
+/**
+ * A role is now a row in the database, so a role code is any string — the
+ * authority can create its own. These seven are seeded, referred to by name in
+ * code, and cannot be deleted.
+ */
+export const SYSTEM_ROLES = {
+  SUPER_ADMIN: "SUPER_ADMIN",
+  ADMIN: "ADMIN",
+  ZONE_OFFICER: "ZONE_OFFICER",
+  AUDITOR: "AUDITOR",
+  VENDOR: "VENDOR",
+  ATTENDANT: "ATTENDANT",
+  CITIZEN: "CITIZEN",
+} as const;
+
+export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
+
+/** Any role code, including one the authority created. */
+export type RoleCode = string;
 
 export const PERMISSIONS = [
   "zone.read", "zone.write", "zone.status", "slot.write",
@@ -12,45 +32,13 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number];
 
 /**
- * The single source of truth for who may do what. The guard pre-checks it and
- * every zone-scoped service re-asserts scope — defence in depth, not decoration.
+ * Grants used to live here. They are rows in the `Role` table now, read through
+ * RolesService, so the authority can change them without a deploy.
+ *
+ * What remains is the catalogue: the set of permission keys the platform knows
+ * how to enforce. That genuinely is code — a permission the guards never check
+ * would be a checkbox that grants nothing.
  */
-export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[] | "*"> = {
-  SUPER_ADMIN: "*",
-  ADMIN: [
-    "zone.read", "zone.write", "zone.status", "slot.write",
-    "session.read", "session.cancel", "incident.manage",
-    "vendor.read", "vendor.write", "vendor.approve", "attendant.write", "shift.verify",
-    "tariff.read", "tariff.write", "tariff.publish", "discount.write", "pass.write",
-    "payment.read", "payment.refund", "settlement.read", "settlement.approve", "settlement.payout",
-    "report.generate", "audit.read", "user.manage", "cms.write",
-  ],
-  ZONE_OFFICER: [
-    "zone.read", "zone.status", "session.read", "incident.manage",
-    "vendor.read", "tariff.read", "report.generate",
-  ],
-  AUDITOR: [
-    "zone.read", "session.read", "vendor.read", "tariff.read",
-    "payment.read", "settlement.read", "report.generate", "audit.read",
-  ],
-  VENDOR: ["zone.read", "session.read", "attendant.write", "payment.read", "settlement.read"],
-  ATTENDANT: ["zone.read", "session.read"],
-  CITIZEN: [],
-};
-
-export function can(role: UserRole, permission: Permission): boolean {
-  const grants = ROLE_PERMISSIONS[role];
-  return grants === "*" || grants.includes(permission);
-}
-
-/** Roles whose reads must always be narrowed to the zones they are assigned. */
-export const ZONE_SCOPED_ROLES: UserRole[] = [
-  UserRole.ZONE_OFFICER,
-  UserRole.VENDOR,
-  UserRole.ATTENDANT,
-];
-
-export const isZoneScoped = (role: UserRole): boolean => ZONE_SCOPED_ROLES.includes(role);
 
 /**
  * Display grouping for the permission matrix screen.

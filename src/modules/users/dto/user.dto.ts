@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { UserRole, UserStatus } from "@prisma/client";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
+import { UserStatus } from "@prisma/client";
 import { PaginationSchema } from "@/common/dto/pagination.dto";
 
 /**
@@ -8,10 +9,10 @@ import { PaginationSchema } from "@/common/dto/pagination.dto";
  * with no Vendor row would be able to sign in and see nothing.
  */
 export const STAFF_ROLES = [
-  UserRole.SUPER_ADMIN,
-  UserRole.ADMIN,
-  UserRole.ZONE_OFFICER,
-  UserRole.AUDITOR,
+  SYSTEM_ROLES.SUPER_ADMIN,
+  SYSTEM_ROLES.ADMIN,
+  SYSTEM_ROLES.ZONE_OFFICER,
+  SYSTEM_ROLES.AUDITOR,
 ] as const;
 
 const StaffRole = z.enum(STAFF_ROLES);
@@ -59,7 +60,7 @@ export const AssignZonesSchema = z.object({
 export type AssignZonesDto = z.infer<typeof AssignZonesSchema>;
 
 export const UserQuerySchema = PaginationSchema.extend({
-  role: z.nativeEnum(UserRole).optional(),
+  role: z.string().trim().max(40).optional(),
   status: z.nativeEnum(UserStatus).optional(),
   staffOnly: z.coerce.boolean().default(true),
 });

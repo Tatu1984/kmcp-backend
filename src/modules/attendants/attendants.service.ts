@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
-import { Prisma, ShiftStatus, UserRole, UserStatus } from "@prisma/client";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
+import { Prisma, ShiftStatus, UserStatus } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 
 import { PrismaService } from "@/prisma/prisma.service";
@@ -46,11 +47,11 @@ export class AttendantsService {
 
   /** A vendor only ever sees their own staff. */
   private scopeFilter(user: AuthenticatedUser): Prisma.AttendantWhereInput {
-    return user.role === UserRole.VENDOR && user.vendorId ? { vendorId: user.vendorId } : {};
+    return user.role === SYSTEM_ROLES.VENDOR && user.vendorId ? { vendorId: user.vendorId } : {};
   }
 
   private assertOwnership(vendorId: string, user: AuthenticatedUser) {
-    if (user.role === UserRole.VENDOR && user.vendorId !== vendorId) {
+    if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId !== vendorId) {
       throw AppException.forbidden("This attendant belongs to another vendor.");
     }
   }
@@ -163,7 +164,7 @@ export class AttendantsService {
           name: dto.name,
           phone: dto.phone,
           email: dto.email?.toLowerCase(),
-          role: UserRole.ATTENDANT,
+          role: SYSTEM_ROLES.ATTENDANT,
           status: UserStatus.ACTIVE,
           passwordHash: dto.password ? await bcrypt.hash(dto.password, 12) : null,
         },

@@ -1,9 +1,9 @@
 import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { Request } from "express";
-import type { UserRole } from "@prisma/client";
 import { AppException } from "../errors/app.exception";
-import { can, type Permission } from "../rbac/permissions";
+import type { Permission, RoleCode } from "../rbac/permissions";
+import { RolesService } from "../rbac/roles.service";
 import {
   IS_PUBLIC_KEY,
   PERMISSIONS_KEY,
@@ -18,16 +18,19 @@ import {
  */
 @Injectable()
 export class RbacGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly roles: RolesService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
     if (isPublic) return true;
 
-    const roles = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
+    const roles = this.reflector.getAllAndOverride<RoleCode[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
@@ -46,8 +49,13 @@ export class RbacGuard implements CanActivate {
       throw AppException.forbidden("Your role does not permit that action.");
     }
 
-    if (permissions?.length && !permissions.every((p) => can(user.role, p))) {
-      throw AppException.forbidden("Your role does not permit that action.");
+    if (permissions?.length) {
+      // Read from the database rather than a compiled constant, so a permission
+      // granted or revoked in the portal takes effect without a deploy.
+      const granted = await Promise.all(permissions.map((p) => this.roles.can(user.role, p)));
+      if (!granted.every(Boolean)) {
+        throw AppException.forbidden("Your role does not permit that action.");
+      }
     }
 
     return true;

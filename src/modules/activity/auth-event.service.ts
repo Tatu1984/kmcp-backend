@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { AuthEventType, Prisma, UserRole } from "@prisma/client";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
+import { AuthEventType, Prisma } from "@prisma/client";
 import type { Request } from "express";
 
 import { PrismaService } from "@/prisma/prisma.service";
@@ -38,7 +39,7 @@ export interface RecordEventInput {
   context: LoginContext;
   userId?: string | null;
   userName?: string | null;
-  userRole?: UserRole | null;
+  userRole?: RoleCode | null;
   sessionId?: string | null;
   identifierTried?: string | null;
   failureReason?: string | null;
@@ -134,7 +135,7 @@ export class AuthEventService {
     sessionId: string;
     userId: string;
     userName?: string;
-    userRole?: UserRole;
+    userRole?: RoleCode;
     expiresAt: Date;
     context: LoginContext;
   }): Promise<void> {
@@ -228,7 +229,7 @@ export class AuthEventService {
    */
   async detectAnomalies(args: {
     userId: string;
-    role: UserRole;
+    role: RoleCode;
     context: LoginContext;
     now?: Date;
   }): Promise<{ anomalies: Anomaly[]; riskScore: number }> {
@@ -329,7 +330,7 @@ export class AuthEventService {
         code: "NEW_DEVICE",
         // A field account moving handset is a much stronger signal than an
         // officer opening the portal on a new laptop.
-        severity: role === UserRole.ATTENDANT || role === UserRole.VENDOR ? "medium" : "low",
+        severity: role === SYSTEM_ROLES.ATTENDANT || role === SYSTEM_ROLES.VENDOR ? "medium" : "low",
         detail: `First sign-in from this device (${device.browserName ?? "unknown browser"} on ${
           device.osName ?? "unknown OS"
         }).`,

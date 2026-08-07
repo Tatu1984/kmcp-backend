@@ -8,7 +8,6 @@ import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { boundingBox, distanceMetres, withinZone, type GeoPolygon } from "@/common/utils/geo.util";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
-import { isZoneScoped } from "@/common/rbac/permissions";
 import type {
   CreateZoneDto,
   NearbyDto,
@@ -53,7 +52,7 @@ export class ZonesService {
    * query, not filtered afterwards, so a scoped caller cannot page past it.
    */
   private scopeFilter(user: AuthenticatedUser): Prisma.ZoneWhereInput {
-    if (!isZoneScoped(user.role) || user.zoneIds.length === 0) return {};
+    if (!user.isZoneScoped || user.zoneIds.length === 0) return {};
     return { id: { in: user.zoneIds } };
   }
 

@@ -7,7 +7,6 @@ import { AuditService } from "@/common/services/audit.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
-import { isZoneScoped } from "@/common/rbac/permissions";
 import type {
   BulkCreateSlotsDto,
   CreateSlotDto,
@@ -45,7 +44,7 @@ export class SlotsService {
   ) {}
 
   private scopeFilter(user: AuthenticatedUser): Prisma.SlotWhereInput {
-    if (!isZoneScoped(user.role) || user.zoneIds.length === 0) return {};
+    if (!user.isZoneScoped || user.zoneIds.length === 0) return {};
     return { zoneId: { in: user.zoneIds } };
   }
 

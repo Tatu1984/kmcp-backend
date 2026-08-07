@@ -1,8 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Post, Req } from "@nestjs/common";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
 import type { Request } from "express";
 import { Throttle } from "@nestjs/throttler";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
-import { UserRole } from "@prisma/client";
 
 import { zodPipe } from "@/common/pipes/zod-validation.pipe";
 import {
@@ -149,7 +149,7 @@ export class AuthController {
   }
 
   @ApiBearerAuth("bearer")
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(SYSTEM_ROLES.SUPER_ADMIN)
   @Post("two-factor/disable/:userId")
   @ApiOperation({ summary: "Remove an authenticator from an account (Super Admin only)" })
   disableTwoFactor(@Param("userId") userId: string) {

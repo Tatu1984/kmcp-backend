@@ -1,11 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
 import {
   Prisma,
   SessionSource,
   SessionStatus,
   SlotStatus,
   SlotType,
-  UserRole,
   ZoneStatus,
 } from "@prisma/client";
 
@@ -16,7 +16,6 @@ import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { withinZone, type GeoPolygon } from "@/common/utils/geo.util";
 import { generateSessionCode, isValidPlate, normalisePlate } from "@/common/utils/plate.util";
-import { isZoneScoped } from "@/common/rbac/permissions";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
 import { QuoteService } from "@/modules/tariffs/quote.service";
 import type {
@@ -85,8 +84,8 @@ export class SessionsService {
   ) {}
 
   private scopeFilter(user: AuthenticatedUser): Prisma.ParkingSessionWhereInput {
-    if (user.role === UserRole.VENDOR && user.vendorId) return { vendorId: user.vendorId };
-    if (isZoneScoped(user.role) && user.zoneIds.length > 0) return { zoneId: { in: user.zoneIds } };
+    if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) return { vendorId: user.vendorId };
+    if (user.isZoneScoped && user.zoneIds.length > 0) return { zoneId: { in: user.zoneIds } };
     return {};
   }
 
