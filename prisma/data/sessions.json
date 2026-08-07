@@ -1,0 +1,74 @@
+[
+  {
+    "code": "KMCP-SEED01",
+    "plate": "WB02AB1234",
+    "zoneId": "zn_pks_01",
+    "attendantId": "att_001",
+    "vendorId": "ven_metro",
+    "startedMinutesAgo": 45,
+    "endedMinutesAgo": null
+  },
+  {
+    "code": "KMCP-SEED02",
+    "plate": "WB06C4455",
+    "zoneId": "zn_pks_02",
+    "attendantId": "att_002",
+    "vendorId": "ven_metro",
+    "startedMinutesAgo": 120,
+    "endedMinutesAgo": null
+  },
+  {
+    "code": "KMCP-SEED03",
+    "plate": "WB20K9911",
+    "zoneId": "zn_cam_01",
+    "attendantId": "att_003",
+    "vendorId": "ven_metro",
+    "startedMinutesAgo": 25,
+    "endedMinutesAgo": null
+  },
+  {
+    "code": "KMCP-SEED04",
+    "plate": "WB24T7788",
+    "zoneId": "zn_gar_01",
+    "attendantId": "att_004",
+    "vendorId": "ven_orbit",
+    "startedMinutesAgo": 430,
+    "endedMinutesAgo": null
+  },
+  {
+    "code": "KMCP-SEED05",
+    "plate": "WB19E3322",
+    "zoneId": "zn_hin_01",
+    "attendantId": "att_005",
+    "vendorId": "ven_orbit",
+    "startedMinutesAgo": 300,
+    "endedMinutesAgo": 60
+  },
+  {
+    "code": "KMCP-SEED06",
+    "plate": "WB02AJ8080",
+    "zoneId": "zn_ras_01",
+    "attendantId": "att_006",
+    "vendorId": "ven_orbit",
+    "startedMinutesAgo": 260,
+    "endedMinutesAgo": 140
+  },
+  {
+    "code": "KMCP-SEED07",
+    "plate": "WB74M2211",
+    "zoneId": "zn_pks_01",
+    "attendantId": "att_001",
+    "vendorId": "ven_metro",
+    "startedMinutesAgo": 600,
+    "endedMinutesAgo": 480
+  },
+  {
+    "code": "KMCP-SEED08",
+    "plate": "WB12F6543",
+    "zoneId": "zn_gar_01",
+    "attendantId": "att_004",
+    "vendorId": "ven_orbit",
+    "startedMinutesAgo": 1500,
+    "endedMinutesAgo": 1380
+  }
+]

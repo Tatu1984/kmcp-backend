@@ -1,0 +1,72 @@
+[
+  {
+    "id": "trf_car_city",
+    "name": "City Standard — Car",
+    "zoneId": null,
+    "vehicleTypeId": "CAR",
+    "baseAmount": 2000,
+    "baseMinutes": 60,
+    "incrementAmount": 1500,
+    "incrementMinutes": 60,
+    "dailyCap": 15000,
+    "grace": 10,
+    "overstay": 5000,
+    "priority": 1
+  },
+  {
+    "id": "trf_2w_city",
+    "name": "City Standard — Two Wheeler",
+    "zoneId": null,
+    "vehicleTypeId": "TWO_WHEELER",
+    "baseAmount": 1000,
+    "baseMinutes": 60,
+    "incrementAmount": 500,
+    "incrementMinutes": 60,
+    "dailyCap": 6000,
+    "grace": 10,
+    "overstay": 2500,
+    "priority": 1
+  },
+  {
+    "id": "trf_ev_city",
+    "name": "City Standard — Electric Vehicle",
+    "zoneId": null,
+    "vehicleTypeId": "EV",
+    "baseAmount": 1500,
+    "baseMinutes": 60,
+    "incrementAmount": 1000,
+    "incrementMinutes": 60,
+    "dailyCap": 10000,
+    "grace": 15,
+    "overstay": 3000,
+    "priority": 1
+  },
+  {
+    "id": "trf_car_park",
+    "name": "Park Street Premium — Car",
+    "zoneId": "zn_pks_01",
+    "vehicleTypeId": "CAR",
+    "baseAmount": 3000,
+    "baseMinutes": 60,
+    "incrementAmount": 2500,
+    "incrementMinutes": 60,
+    "dailyCap": 25000,
+    "grace": 5,
+    "overstay": 7500,
+    "priority": 10
+  },
+  {
+    "id": "trf_car_gar",
+    "name": "Gariahat Market — Car",
+    "zoneId": "zn_gar_01",
+    "vehicleTypeId": "CAR",
+    "baseAmount": 2500,
+    "baseMinutes": 60,
+    "incrementAmount": 2000,
+    "incrementMinutes": 60,
+    "dailyCap": 18000,
+    "grace": 10,
+    "overstay": 6000,
+    "priority": 10
+  }
+]

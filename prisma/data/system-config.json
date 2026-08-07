@@ -1,0 +1,42 @@
+[
+  {
+    "key": "ops.geofenceToleranceM",
+    "value": 25
+  },
+  {
+    "key": "ops.defaultGracePeriodMin",
+    "value": 10
+  },
+  {
+    "key": "ops.overstayAfterMinutes",
+    "value": 360
+  },
+  {
+    "key": "ops.maxSyncBatch",
+    "value": 50
+  },
+  {
+    "key": "tax.gstPercent",
+    "value": 18
+  },
+  {
+    "key": "tax.invoicePrefix",
+    "value": "RCPT/"
+  },
+  {
+    "key": "settlement.defaultCycle",
+    "value": "WEEKLY"
+  },
+  {
+    "key": "settlement.defaultCommissionPct",
+    "value": 18
+  },
+  {
+    "key": "settlement.holdOnVariance",
+    "value": true
+  },
+  {
+    "key": "settlement.blockPayoutUntilKyc",
+    "value": true
+  }
+]

@@ -1,0 +1,57 @@
+[
+  {
+    "id": "str_lindsay",
+    "wardId": "wrd_045",
+    "name": "Lindsay Street"
+  },
+  {
+    "id": "str_chowringhee",
+    "wardId": "wrd_045",
+    "name": "Jawaharlal Nehru Road (Chowringhee)"
+  },
+  {
+    "id": "str_park",
+    "wardId": "wrd_063",
+    "name": "Park Street (Mother Teresa Sarani)"
+  },
+  {
+    "id": "str_camac",
+    "wardId": "wrd_063",
+    "name": "Camac Street (Abanindranath Tagore Sarani)"
+  },
+  {
+    "id": "str_russell",
+    "wardId": "wrd_063",
+    "name": "Russell Street"
+  },
+  {
+    "id": "str_shakespeare",
+    "wardId": "wrd_064",
+    "name": "Shakespeare Sarani"
+  },
+  {
+    "id": "str_ballygunge",
+    "wardId": "wrd_064",
+    "name": "Ballygunge Circular Road"
+  },
+  {
+    "id": "str_gariahat",
+    "wardId": "wrd_069",
+    "name": "Gariahat Road"
+  },
+  {
+    "id": "str_hindustan",
+    "wardId": "wrd_069",
+    "name": "Hindustan Park"
+  },
+  {
+    "id": "str_rashbehari",
+    "wardId": "wrd_088",
+    "name": "Rashbehari Avenue"
+  },
+  {
+    "id": "str_southern",
+    "wardId": "wrd_088",
+    "name": "Southern Avenue"
+  }
+]

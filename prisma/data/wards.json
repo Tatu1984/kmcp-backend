@@ -1,0 +1,27 @@
+[
+  {
+    "id": "wrd_045",
+    "code": "W045",
+    "name": "Ward 45 — Esplanade & New Market"
+  },
+  {
+    "id": "wrd_063",
+    "code": "W063",
+    "name": "Ward 63 — Park Street"
+  },
+  {
+    "id": "wrd_064",
+    "code": "W064",
+    "name": "Ward 64 — Ballygunge"
+  },
+  {
+    "id": "wrd_069",
+    "code": "W069",
+    "name": "Ward 69 — Gariahat"
+  },
+  {
+    "id": "wrd_088",
+    "code": "W088",
+    "name": "Ward 88 — Lake & Southern Avenue"
+  }
+]

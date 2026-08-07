@@ -1,0 +1,50 @@
+[
+  {
+    "plate": "WB02AB1234",
+    "type": "CAR",
+    "make": "Maruti Swift",
+    "colour": "White"
+  },
+  {
+    "plate": "WB06C4455",
+    "type": "CAR",
+    "make": "Hyundai i20",
+    "colour": "Silver"
+  },
+  {
+    "plate": "WB20K9911",
+    "type": "TWO_WHEELER",
+    "make": "Honda Activa",
+    "colour": "Grey"
+  },
+  {
+    "plate": "WB24T7788",
+    "type": "CAR",
+    "make": "Tata Nexon EV",
+    "colour": "Blue"
+  },
+  {
+    "plate": "WB19E3322",
+    "type": "EV",
+    "make": "MG ZS EV",
+    "colour": "White"
+  },
+  {
+    "plate": "WB02AJ8080",
+    "type": "CAR",
+    "make": "Toyota Innova",
+    "colour": "Black"
+  },
+  {
+    "plate": "WB74M2211",
+    "type": "TWO_WHEELER",
+    "make": "TVS Jupiter",
+    "colour": "Red"
+  },
+  {
+    "plate": "WB12F6543",
+    "type": "CAR",
+    "make": "Honda City",
+    "colour": "Silver"
+  }
+]

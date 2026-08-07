@@ -1,0 +1,23 @@
+[
+  {
+    "email": "sudipta.banerjee@kmc.gov.in",
+    "name": "Sudipta Banerjee",
+    "phone": "+919830011223",
+    "role": "SUPER_ADMIN"
+  },
+  {
+    "email": "rina.dasgupta@kmc.gov.in",
+    "name": "Rina Dasgupta",
+    "role": "ADMIN"
+  },
+  {
+    "email": "prabir.c@kmc.gov.in",
+    "name": "Prabir Chatterjee",
+    "role": "ZONE_OFFICER"
+  },
+  {
+    "email": "audit@kmc.gov.in",
+    "name": "Audit Cell",
+    "role": "AUDITOR"
+  }
+]

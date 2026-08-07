@@ -1,0 +1,53 @@
+[
+  {
+    "code": "TWO_WHEELER",
+    "label": "Two Wheeler",
+    "sortOrder": 1
+  },
+  {
+    "code": "THREE_WHEELER",
+    "label": "Three Wheeler",
+    "sortOrder": 2
+  },
+  {
+    "code": "CAR",
+    "label": "Car",
+    "sortOrder": 3
+  },
+  {
+    "code": "EV",
+    "label": "Electric Vehicle",
+    "sortOrder": 4
+  },
+  {
+    "code": "COMMERCIAL",
+    "label": "Commercial",
+    "sortOrder": 5
+  },
+  {
+    "code": "BUS",
+    "label": "Bus",
+    "sortOrder": 6
+  },
+  {
+    "code": "TRUCK",
+    "label": "Truck",
+    "sortOrder": 7
+  },
+  {
+    "code": "VIP",
+    "label": "VIP",
+    "sortOrder": 8
+  },
+  {
+    "code": "GOVERNMENT",
+    "label": "Government",
+    "sortOrder": 9
+  },
+  {
+    "code": "ACCESSIBLE",
+    "label": "Accessible",
+    "sortOrder": 10,
+    "isActive": false
+  }
+]

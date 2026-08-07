@@ -1,0 +1,191 @@
+[
+  {
+    "id": "zn_pks_01",
+    "code": "PKS-01",
+    "name": "Park Street (South Kerb)",
+    "wardId": "wrd_063",
+    "streetId": "str_park",
+    "lat": 22.5535,
+    "lng": 88.352,
+    "capacity": 120,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV",
+      "THREE_WHEELER",
+      "COMMERCIAL"
+    ],
+    "open": "07:00",
+    "close": "23:00",
+    "status": "OPEN"
+  },
+  {
+    "id": "zn_pks_02",
+    "code": "PKS-02",
+    "name": "Park Street (North Kerb)",
+    "wardId": "wrd_063",
+    "streetId": "str_park",
+    "lat": 22.5541,
+    "lng": 88.3527,
+    "capacity": 96,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV"
+    ],
+    "open": "07:00",
+    "close": "23:00",
+    "status": "OPEN"
+  },
+  {
+    "id": "zn_cam_01",
+    "code": "CAM-01",
+    "name": "Camac Street",
+    "wardId": "wrd_063",
+    "streetId": "str_camac",
+    "lat": 22.5448,
+    "lng": 88.352,
+    "capacity": 84,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV"
+    ],
+    "open": "08:00",
+    "close": "22:00",
+    "status": "OPEN"
+  },
+  {
+    "id": "zn_rus_01",
+    "code": "RUS-01",
+    "name": "Russell Street",
+    "wardId": "wrd_063",
+    "streetId": "str_russell",
+    "lat": 22.552,
+    "lng": 88.353,
+    "capacity": 48,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV"
+    ],
+    "open": "08:00",
+    "close": "21:00",
+    "status": "MAINTENANCE",
+    "closureReason": "Resurfacing works until further notice"
+  },
+  {
+    "id": "zn_shk_01",
+    "code": "SHK-01",
+    "name": "Shakespeare Sarani",
+    "wardId": "wrd_064",
+    "streetId": "str_shakespeare",
+    "lat": 22.54,
+    "lng": 88.356,
+    "capacity": 72,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV",
+      "THREE_WHEELER",
+      "COMMERCIAL"
+    ],
+    "open": "07:00",
+    "close": "22:00",
+    "status": "OPEN"
+  },
+  {
+    "id": "zn_bly_01",
+    "code": "BLY-01",
+    "name": "Ballygunge Circular Road",
+    "wardId": "wrd_064",
+    "streetId": "str_ballygunge",
+    "lat": 22.5305,
+    "lng": 88.3635,
+    "capacity": 60,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV"
+    ],
+    "open": "08:00",
+    "close": "21:00",
+    "status": "OPEN"
+  },
+  {
+    "id": "zn_gar_01",
+    "code": "GAR-01",
+    "name": "Gariahat Market",
+    "wardId": "wrd_069",
+    "streetId": "str_gariahat",
+    "lat": 22.517,
+    "lng": 88.366,
+    "capacity": 140,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV",
+      "THREE_WHEELER",
+      "COMMERCIAL"
+    ],
+    "open": "06:00",
+    "close": "23:00",
+    "status": "OPEN"
+  },
+  {
+    "id": "zn_hin_01",
+    "code": "HIN-01",
+    "name": "Hindustan Park",
+    "wardId": "wrd_069",
+    "streetId": "str_hindustan",
+    "lat": 22.514,
+    "lng": 88.362,
+    "capacity": 40,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV"
+    ],
+    "open": "08:00",
+    "close": "20:00",
+    "status": "OPEN"
+  },
+  {
+    "id": "zn_ras_01",
+    "code": "RAS-01",
+    "name": "Rashbehari Avenue",
+    "wardId": "wrd_088",
+    "streetId": "str_rashbehari",
+    "lat": 22.515,
+    "lng": 88.352,
+    "capacity": 88,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV"
+    ],
+    "open": "07:00",
+    "close": "22:00",
+    "status": "OPEN"
+  },
+  {
+    "id": "zn_new_01",
+    "code": "NEW-01",
+    "name": "New Market (Lindsay Street)",
+    "wardId": "wrd_045",
+    "streetId": "str_lindsay",
+    "lat": 22.5622,
+    "lng": 88.352,
+    "capacity": 110,
+    "types": [
+      "TWO_WHEELER",
+      "CAR",
+      "EV",
+      "THREE_WHEELER",
+      "COMMERCIAL"
+    ],
+    "open": "09:00",
+    "close": "21:00",
+    "status": "OPEN"
+  }
+]

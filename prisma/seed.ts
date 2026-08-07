@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PrismaClient, SlotType, UserRole, UserStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import * as bcrypt from "bcryptjs";
@@ -8,57 +10,53 @@ const prisma = new PrismaClient({
 });
 
 /**
- * Vehicle types are reference data keyed by their own code.
+ * Everything this loads lives in `prisma/data/*.json`, not in this file.
  *
- * Using the code as the primary key is deliberate: `vehicleTypeId` is a foreign
- * key, and the mobile apps send `"CAR"` rather than an opaque cuid. That keeps
- * the wire contract readable while still giving the authority a table it can
- * extend with new categories.
+ * Reference data, configuration and staff are all things the authority will
+ * eventually supply from its own records. Keeping them as data means replacing
+ * them is a file swap that anyone can review in a diff, rather than an edit to
+ * TypeScript that only a developer can make.
  */
-const VEHICLE_TYPES: { code: SlotType; label: string; sortOrder: number; isActive?: boolean }[] = [
-  { code: SlotType.TWO_WHEELER, label: "Two Wheeler", sortOrder: 1 },
-  { code: SlotType.THREE_WHEELER, label: "Three Wheeler", sortOrder: 2 },
-  { code: SlotType.CAR, label: "Car", sortOrder: 3 },
-  { code: SlotType.EV, label: "Electric Vehicle", sortOrder: 4 },
-  { code: SlotType.COMMERCIAL, label: "Commercial", sortOrder: 5 },
-  { code: SlotType.BUS, label: "Bus", sortOrder: 6 },
-  { code: SlotType.TRUCK, label: "Truck", sortOrder: 7 },
-  { code: SlotType.VIP, label: "VIP", sortOrder: 8 },
-  { code: SlotType.GOVERNMENT, label: "Government", sortOrder: 9 },
-  { code: SlotType.ACCESSIBLE, label: "Accessible", sortOrder: 10, isActive: false },
-];
+const DATA_DIR = join(__dirname, "data");
 
-const STAFF = [
-  {
-    email: "sudipta.banerjee@kmc.gov.in",
-    name: "Sudipta Banerjee",
-    phone: "+919830011223",
-    role: UserRole.SUPER_ADMIN,
-  },
-  { email: "rina.dasgupta@kmc.gov.in", name: "Rina Dasgupta", role: UserRole.ADMIN },
-  { email: "prabir.c@kmc.gov.in", name: "Prabir Chatterjee", role: UserRole.ZONE_OFFICER },
-  { email: "audit@kmc.gov.in", name: "Audit Cell", role: UserRole.AUDITOR },
-];
+function load<T>(file: string): T[] {
+  try {
+    return JSON.parse(readFileSync(join(DATA_DIR, file), "utf8")) as T[];
+  } catch (error) {
+    throw new Error(`Could not read seed data from prisma/data/${file} — ${String(error)}`);
+  }
+}
 
-const SYSTEM_CONFIG: { key: string; value: unknown }[] = [
-  { key: "ops.geofenceToleranceM", value: 25 },
-  { key: "ops.defaultGracePeriodMin", value: 10 },
-  { key: "ops.overstayAfterMinutes", value: 360 },
-  { key: "ops.maxSyncBatch", value: 50 },
-  { key: "tax.gstPercent", value: 18 },
-  { key: "tax.invoicePrefix", value: "RCPT/" },
-  { key: "settlement.defaultCycle", value: "WEEKLY" },
-  { key: "settlement.defaultCommissionPct", value: 18 },
-  { key: "settlement.holdOnVariance", value: true },
-  { key: "settlement.blockPayoutUntilKyc", value: true },
-];
+interface VehicleTypeRow {
+  code: SlotType;
+  label: string;
+  sortOrder: number;
+  isActive?: boolean;
+}
+interface ConfigRow {
+  key: string;
+  value: unknown;
+}
+interface StaffRow {
+  email: string;
+  name: string;
+  phone?: string;
+  role: UserRole;
+}
 
 async function main() {
   const password = process.env.SEED_PASSWORD ?? "kmcp-demo-2026";
   const passwordHash = await bcrypt.hash(password, 12);
 
-  // ---- reference data -----------------------------------------------------
-  for (const type of VEHICLE_TYPES) {
+  /**
+   * Vehicle types are keyed by their own code.
+   *
+   * Deliberate: `vehicleTypeId` is a foreign key, and the mobile apps send
+   * `"CAR"` rather than an opaque cuid. That keeps the wire contract readable
+   * while still giving the authority a table it can extend.
+   */
+  const vehicleTypes = load<VehicleTypeRow>("vehicle-types.json");
+  for (const type of vehicleTypes) {
     await prisma.vehicleType.upsert({
       where: { id: type.code },
       create: {
@@ -71,26 +69,28 @@ async function main() {
       update: { label: type.label, sortOrder: type.sortOrder },
     });
   }
-  console.log(`✔ ${VEHICLE_TYPES.length} vehicle types`);
+  console.log(`✔ ${vehicleTypes.length} vehicle types`);
 
-  // ---- system configuration ----------------------------------------------
-  for (const entry of SYSTEM_CONFIG) {
+  // Never overwritten on re-run: an operator may have tuned the grace period or
+  // the geo-fence tolerance in the portal, and a seed must not undo that.
+  const config = load<ConfigRow>("system-config.json");
+  for (const entry of config) {
     await prisma.systemConfig.upsert({
       where: { key: entry.key },
       create: { key: entry.key, value: entry.value as never },
       update: {},
     });
   }
-  console.log(`✔ ${SYSTEM_CONFIG.length} configuration keys`);
+  console.log(`✔ ${config.length} configuration keys`);
 
-  // ---- staff accounts ------------------------------------------------------
-  for (const person of STAFF) {
+  const staff = load<StaffRow>("staff.json");
+  for (const person of staff) {
     await prisma.user.upsert({
       where: { email: person.email },
       create: {
         email: person.email,
         name: person.name,
-        phone: "phone" in person ? person.phone : undefined,
+        phone: person.phone,
         role: person.role,
         status: UserStatus.ACTIVE,
         passwordHash,
@@ -98,7 +98,7 @@ async function main() {
       update: { passwordHash, role: person.role },
     });
   }
-  console.log(`✔ ${STAFF.length} staff accounts (password: ${password})`);
+  console.log(`✔ ${staff.length} staff accounts (password: ${password})`);
 
   // Geography, kerb, operators, staff, tariffs and sessions — everything the
   // portal needs in order to show something other than an empty state.

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "att_001",
+    "vendorId": "ven_metro",
+    "code": "MTR-101",
+    "name": "Subir Das",
+    "phone": "+919831550101",
+    "zoneId": "zn_pks_01"
+  },
+  {
+    "id": "att_002",
+    "vendorId": "ven_metro",
+    "code": "MTR-102",
+    "name": "Rekha Paul",
+    "phone": "+919831550102",
+    "zoneId": "zn_pks_02"
+  },
+  {
+    "id": "att_003",
+    "vendorId": "ven_metro",
+    "code": "MTR-103",
+    "name": "Imran Sheikh",
+    "phone": "+919831550103",
+    "zoneId": "zn_cam_01"
+  },
+  {
+    "id": "att_004",
+    "vendorId": "ven_orbit",
+    "code": "ORB-201",
+    "name": "Bapi Sardar",
+    "phone": "+919831550201",
+    "zoneId": "zn_gar_01"
+  },
+  {
+    "id": "att_005",
+    "vendorId": "ven_orbit",
+    "code": "ORB-202",
+    "name": "Jhuma Mondal",
+    "phone": "+919831550202",
+    "zoneId": "zn_hin_01"
+  },
+  {
+    "id": "att_006",
+    "vendorId": "ven_orbit",
+    "code": "ORB-203",
+    "name": "Kartik Roy",
+    "phone": "+919831550203",
+    "zoneId": "zn_ras_01"
+  }
+]

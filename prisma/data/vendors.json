@@ -1,0 +1,50 @@
+[
+  {
+    "id": "ven_metro",
+    "userId": "usr_ven_metro",
+    "orgName": "Metro Kerb Management Pvt Ltd",
+    "contact": "Arindam Ghosh",
+    "phone": "+919830440001",
+    "email": "ops@metrokerb.in",
+    "gstin": "19AABCM1234C1Z8",
+    "pan": "AABCM1234C",
+    "commission": 18,
+    "status": "APPROVED",
+    "zones": [
+      "zn_pks_01",
+      "zn_pks_02",
+      "zn_cam_01",
+      "zn_rus_01"
+    ]
+  },
+  {
+    "id": "ven_orbit",
+    "userId": "usr_ven_orbit",
+    "orgName": "Orbit Parking Services",
+    "contact": "Sabina Rahman",
+    "phone": "+919830440002",
+    "email": "ops@orbitparking.in",
+    "gstin": "19AAFCO5678D1ZK",
+    "pan": "AAFCO5678D",
+    "commission": 16.5,
+    "status": "APPROVED",
+    "zones": [
+      "zn_gar_01",
+      "zn_hin_01",
+      "zn_ras_01"
+    ]
+  },
+  {
+    "id": "ven_civic",
+    "userId": "usr_ven_civic",
+    "orgName": "Civic Mobility Contractors",
+    "contact": "Tapan Mitra",
+    "phone": "+919830440003",
+    "email": "ops@civicmobility.in",
+    "gstin": null,
+    "pan": "AACCC9012E",
+    "commission": 20,
+    "status": "PENDING",
+    "zones": []
+  }
+]
