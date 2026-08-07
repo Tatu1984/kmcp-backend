@@ -1,6 +1,7 @@
 import { PrismaClient, SlotType, UserRole, UserStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import * as bcrypt from "bcryptjs";
+import { seedOperations } from "./seed-operations";
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? "" }),
@@ -98,6 +99,10 @@ async function main() {
     });
   }
   console.log(`✔ ${STAFF.length} staff accounts (password: ${password})`);
+
+  // Geography, kerb, operators, staff, tariffs and sessions — everything the
+  // portal needs in order to show something other than an empty state.
+  await seedOperations(prisma);
 
   console.log("\nSeed complete.");
 }

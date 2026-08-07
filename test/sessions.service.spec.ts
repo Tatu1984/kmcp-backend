@@ -206,6 +206,7 @@ describe("ending a session", () => {
 
   const QUOTE = {
     tariffId: "trf_1",
+    durationMinutes: 120,
     grossAmount: 3500,
     discountAmount: 0,
     taxAmount: 630,
@@ -230,6 +231,21 @@ describe("ending a session", () => {
     // Stored, not recomputed later: a receipt reprinted next year must show the
     // lines that were actually charged.
     expect(data.fareBreakdown).toEqual(QUOTE);
+  });
+
+  it("stores the duration the fare was computed on, not its own", async () => {
+    // The quote rounds a part minute up; if the row rounded to nearest, a
+    // 95-and-a-half minute stay would be stored as 95 and billed as 96.
+    const { service, prisma } = endService(live, { ...QUOTE, durationMinutes: 96 });
+
+    await service.end(
+      "ses_1",
+      { endedAt: new Date("2026-08-06T11:35:30Z") } as any,
+      ATTENDANT_USER as any,
+      {},
+    );
+
+    expect(prisma.parkingSession.update.mock.calls[0][0].data.durationMinutes).toBe(96);
   });
 
   it("does not re-price a session that is already completed", async () => {

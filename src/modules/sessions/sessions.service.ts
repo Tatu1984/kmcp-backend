@@ -362,7 +362,11 @@ export class SessionsService {
       discountCode: dto.discountCode,
     });
 
-    const durationMinutes = Math.max(0, Math.round((endAt.getTime() - session.startAt.getTime()) / 60000));
+    // Taken from the quote, not recomputed. The fare engine rounds a part
+    // minute up — you do not get a free thirty seconds — so computing it again
+    // here with a different rule would store a duration that disagrees with the
+    // amount charged, and leave a disputed fare impossible to reconcile.
+    const durationMinutes = quote.durationMinutes;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.parkingSession.update({
