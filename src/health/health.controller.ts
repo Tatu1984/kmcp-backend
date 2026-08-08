@@ -5,6 +5,16 @@ import { Public } from "@/common/decorators/auth.decorators";
 import { AppException } from "@/common/errors/app.exception";
 import { APP } from "@/config/app.constants";
 
+/**
+ * The commit this build was produced from.
+ *
+ * Vercel sets it at build time. Reporting it is what lets CI prove the deployed
+ * code is the code that was pushed — a push whose deploy hook silently never
+ * fired otherwise looks perfectly healthy, because the previous build is still
+ * answering.
+ */
+const COMMIT = process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? "unknown";
+
 @ApiTags("System")
 @Controller()
 export class HealthController {
@@ -14,7 +24,7 @@ export class HealthController {
   @Get("health")
   @ApiOperation({ summary: "Liveness probe" })
   live() {
-    return { status: "ok", service: "kmcp-api", version: APP.version };
+    return { status: "ok", service: "kmcp-api", version: APP.version, commit: COMMIT };
   }
 
   @Public()
@@ -32,6 +42,7 @@ export class HealthController {
   version() {
     return {
       version: APP.version,
+      commit: COMMIT,
       phase: APP.phase,
       anprEnabled: APP.anprEnabled,
       minimumClientVersion: { vendor: "1.0.0", citizen: "1.0.0" },

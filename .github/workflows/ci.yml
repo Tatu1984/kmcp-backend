@@ -1,0 +1,89 @@
+name: CI
+
+# Two things happen here, and the second is the one that has actually caught
+# problems: the code is checked, and then the deployment is checked against the
+# commit that triggered it. A push whose Vercel hook silently never fires leaves
+# the previous build serving happily — healthy to every probe, and wrong.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `prisma generate` runs on postinstall. It reads the schema only, so no
+      # database URL is needed and CI holds no secrets.
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      # No lint step: this repo's `lint` script calls an eslint that is neither
+      # a dependency nor configured here, so it has never run. Adding a linter
+      # is a change to the code, not to CI, and belongs in its own commit.
+      - run: npm test
+
+      # The check that matters most here: this API has failed to boot on Vercel
+      # while passing every test locally.
+      - run: npm run build
+
+  verify-deploy:
+    name: Verify the deployed commit
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Override with a repository variable if the production URL changes.
+      API_URL: ${{ vars.API_URL || 'https://kmcp-backend.vercel.app/api/v1' }}
+
+    steps:
+      - name: Wait for the deployment to report this commit
+        run: |
+          set -uo pipefail
+          expected="${GITHUB_SHA}"
+          url="${API_URL%/}/health"
+          echo "Expecting ${expected} at ${url}"
+
+          for attempt in $(seq 1 40); do
+            body="$(curl -fsS --max-time 15 "$url" 2>/dev/null || true)"
+            commit="$(printf '%s' "$body" | jq -r '.data.commit // .commit // empty' 2>/dev/null || true)"
+
+            if [ "$commit" = "$expected" ]; then
+              echo "Deployed commit matches after ${attempt} attempt(s)."
+              exit 0
+            fi
+
+            echo "attempt ${attempt}/40 — deployed: ${commit:-unreachable}"
+            sleep 15
+          done
+
+          echo "::error::${url} never reported ${expected}. The deploy did not happen, or it deployed something else."
+          exit 1
+
+      - name: Check the database is reachable from the deployment
+        run: |
+          set -uo pipefail
+          url="${API_URL%/}/health/ready"
+          body="$(curl -fsS --max-time 20 "$url" || true)"
+          echo "$body"
+          printf '%s' "$body" | jq -e '(.data.status // .status) == "ready"' >/dev/null \
+            || { echo "::error::${url} did not report ready"; exit 1; }
