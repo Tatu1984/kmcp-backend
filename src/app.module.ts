@@ -30,6 +30,12 @@ import { MediaModule } from "./modules/media/media.module";
 import { SessionsModule } from "./modules/sessions/sessions.module";
 import { PaymentsModule } from "./modules/payments/payments.module";
 import { ShiftsModule } from "./modules/shifts/shifts.module";
+import { IncidentsModule } from "./modules/incidents/incidents.module";
+import { PassesModule } from "./modules/passes/passes.module";
+import { CitizensModule } from "./modules/citizens/citizens.module";
+import { SettlementsModule } from "./modules/settlements/settlements.module";
+import { AnalyticsModule } from "./modules/analytics/analytics.module";
+import { ReportsModule } from "./modules/reports/reports.module";
 
 @Module({
   imports: [
@@ -69,6 +75,12 @@ import { ShiftsModule } from "./modules/shifts/shifts.module";
     SessionsModule,
     PaymentsModule,
     ShiftsModule,
+    IncidentsModule,
+    PassesModule,
+    CitizensModule,
+    SettlementsModule,
+    AnalyticsModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [
