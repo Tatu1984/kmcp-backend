@@ -57,8 +57,13 @@ export class AuthService {
   async login(dto: LoginDto, req: Request): Promise<LoginResult> {
     const ctx = await this.events.buildContext(req, { timezone: dto.timezone });
     const ip = ctx.ip;
+    // Whichever identifier was supplied. The schema guarantees exactly one.
+    const identifier = dto.email ? dto.email.toLowerCase() : (dto.phone as string);
     const user = await this.prisma.user.findFirst({
-      where: { email: dto.email.toLowerCase(), deletedAt: null },
+      where: {
+        ...(dto.email ? { email: identifier } : { phone: identifier }),
+        deletedAt: null,
+      },
       include: { vendor: { select: { id: true } }, attendant: { select: { id: true } } },
     });
 
@@ -74,7 +79,7 @@ export class AuthService {
         userId: user?.id ?? null,
         userName: user?.name ?? null,
         userRole: user?.role ?? null,
-        identifierTried: dto.email,
+        identifierTried: identifier,
         failureReason: user ? "Wrong password" : "No such account",
       });
       throw new AppException("INVALID_CREDENTIALS");
@@ -87,7 +92,7 @@ export class AuthService {
         userId: user.id,
         userName: user.name,
         userRole: user.role,
-        identifierTried: dto.email,
+        identifierTried: identifier,
         failureReason: "Account suspended",
       });
       throw new AppException("ACCOUNT_SUSPENDED");
@@ -107,7 +112,7 @@ export class AuthService {
       return { status: "two_factor_required", challengeId };
     }
 
-    return this.completeLogin(user.id, dto.deviceFingerprint, dto.platform, ctx, dto.email);
+    return this.completeLogin(user.id, dto.deviceFingerprint, dto.platform, ctx, identifier);
   }
 
   async verifyTwoFactor(dto: TwoFactorDto, req: Request): Promise<LoginResult> {

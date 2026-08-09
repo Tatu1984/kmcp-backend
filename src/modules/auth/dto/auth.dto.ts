@@ -1,13 +1,31 @@
 import { z } from "zod";
 
-export const LoginSchema = z.object({
-  email: z.string().email("Enter a valid work email address"),
-  password: z.string().min(6, "Your password is at least 6 characters"),
-  deviceFingerprint: z.string().min(8).max(128).optional(),
-  platform: z.enum(["web", "ios", "android"]).default("web"),
-  /** Browser timezone. A mismatch against the IP's timezone is a signal. */
-  timezone: z.string().max(64).optional(),
-});
+/**
+ * Sign in with an email or a mobile number.
+ *
+ * Portal staff have work email addresses; attendants generally do not — they
+ * are hired with a phone and a shift, and typing an email on a handset at a
+ * kerb is a worse experience for the person who uses this platform most. Either
+ * identifies the account, and exactly one must be given.
+ */
+export const LoginSchema = z
+  .object({
+    email: z.string().email("Enter a valid work email address").optional(),
+    phone: z
+      .string()
+      .regex(/^(\+91)?[6-9]\d{9}$/, "Enter a valid Indian mobile number")
+      .transform((p) => (p.startsWith("+91") ? p : `+91${p}`))
+      .optional(),
+    password: z.string().min(6, "Your password is at least 6 characters"),
+    deviceFingerprint: z.string().min(8).max(128).optional(),
+    platform: z.enum(["web", "ios", "android"]).default("web"),
+    /** Browser timezone. A mismatch against the IP's timezone is a signal. */
+    timezone: z.string().max(64).optional(),
+  })
+  .refine((dto) => Boolean(dto.email) !== Boolean(dto.phone), {
+    message: "Sign in with either an email address or a mobile number",
+    path: ["email"],
+  });
 export type LoginDto = z.infer<typeof LoginSchema>;
 
 export const TwoFactorSchema = z.object({
