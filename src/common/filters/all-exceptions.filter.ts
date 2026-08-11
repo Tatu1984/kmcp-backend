@@ -107,15 +107,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
       case "P2025":
         return { status: 404, body: { code: "NOT_FOUND", message: ERROR_CODES.NOT_FOUND.message } };
-      case "P2003":
+      case "P2003": {
+        // Prisma reports the constraint, not the field: "Zone_wardId_fkey
+        // (index)". A caller cannot act on that, so the column is recovered
+        // from it — an unexplained 422 on save is how a form ends up looking
+        // broken when the real problem is one stale id in a dropdown.
+        const constraint = String(e.meta?.field_name ?? "");
+        const field = constraint.match(/_([A-Za-z0-9]+)_fkey/)?.[1] ?? (constraint || "reference");
         return {
           status: 422,
           body: {
             code: "VALIDATION_FAILED",
-            message: "A referenced record does not exist.",
-            details: [{ field: String(e.meta?.field_name ?? "reference"), issue: "not found" }],
+            message: `No ${field.replace(/Id$/, "")} exists with that id.`,
+            details: [{ field, issue: "no record with that id" }],
           },
         };
+      }
       default:
         return {
           status: 500,
