@@ -48,11 +48,17 @@ export class TariffsController {
     return this.tariffs.list(query);
   }
 
-  @RequirePermissions("tariff.read")
+  // Sits on session.read, not tariff.read: this is what a handset at the kerb
+  // reads, and an attendant is not a tariff administrator. It was gated behind
+  // a permission attendants do not hold, which made the vendor app unable to
+  // fetch the very rate card this endpoint exists to give it.
+  @RequirePermissions("session.read")
   @Get("tariffs/applicable")
   @ApiOperation({
     summary: "The rate that applies to a zone and vehicle type right now",
-    description: "What the attendant app shows before starting a session. No maths on the device.",
+    description:
+      "What the attendant app shows before starting a session, and caches so it can still quote a " +
+      "provisional fare with no signal. The server remains the authority on price.",
   })
   applicable(@Query(zodPipe(ApplicableTariffSchema)) query: ApplicableTariffDto) {
     return this.tariffs.applicable(query.zoneId, query.vehicleType, query.at);
@@ -150,7 +156,9 @@ export class TariffsController {
 
   // ------------------------------------------------------------ holidays
 
-  @RequirePermissions("tariff.read")
+  // Also readable from the kerb: without the calendar a cached rate card would
+  // miss holiday surcharges and quote under the real fare.
+  @RequirePermissions("session.read")
   @Get("holidays")
   @ApiOperation({ summary: "Holiday and event calendar" })
   listHolidays() {

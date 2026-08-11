@@ -7,7 +7,7 @@ import { AuditService } from "@/common/services/audit.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
-import { QuoteService } from "./quote.service";
+import { QuoteService, ruleLabel } from "./quote.service";
 import type {
   CreateDiscountDto,
   CreateHolidayDto,
@@ -296,14 +296,36 @@ export class TariffsService {
     return {
       id: tariff.id,
       name: tariff.name,
+      zoneId: tariff.zoneId,
+      vehicleType,
       baseAmount: tariff.baseAmount,
       baseMinutes: tariff.baseMinutes,
       incrementAmount: tariff.incrementAmount,
       incrementMinutes: tariff.incrementMinutes,
       dailyCapAmount: tariff.dailyCapAmount,
       gracePeriodMin: tariff.gracePeriodMin,
+      overstayPenalty: tariff.overstayPenalty,
       taxPercent: Number(tariff.taxPercent),
       scope: tariff.zoneId ? "ZONE" : "CITY_WIDE",
+      /**
+       * The rules matter as much as the base rate.
+       *
+       * A handset caching this to quote a provisional fare without them would
+       * silently drop every peak, night, weekend and holiday surcharge and
+       * quote *under* the real price — and an under-quote means chasing a
+       * driver who has already gone.
+       */
+      rules: tariff.rules.map((rule) => ({
+        type: rule.type,
+        label: ruleLabel(rule.type, rule.multiplier === null ? null : Number(rule.multiplier), rule.flatAmount),
+        dayType: rule.dayType,
+        timeFrom: rule.timeFrom,
+        timeTo: rule.timeTo,
+        multiplier: rule.multiplier === null ? null : Number(rule.multiplier),
+        flatAmount: rule.flatAmount,
+        priority: rule.priority,
+        isActive: rule.isActive,
+      })),
     };
   }
 

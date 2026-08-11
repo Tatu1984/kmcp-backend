@@ -317,18 +317,33 @@ export class QuoteService {
   }
 
   private ruleLabel(type: TariffRuleType, multiplier: number | null, flat: Paise | null): string {
-    const names: Record<TariffRuleType, string> = {
-      PEAK_HOUR: "Peak hour",
-      WEEKEND: "Weekend",
-      HOLIDAY: "Public holiday",
-      EVENT: "Event",
-      NIGHT: "Night rate",
-      VIP: "VIP zone",
-      COMMERCIAL: "Commercial vehicle",
-      SUBSCRIBER: "Subscriber rate",
-    };
-    const name = names[type];
-    if (flat !== null) return `${name} surcharge`;
-    return multiplier !== null ? `${name} (×${multiplier})` : name;
+    return ruleLabel(type, multiplier, flat);
   }
+}
+
+/**
+ * How a rule reads on a receipt.
+ *
+ * Exported so the attendant app's cached rate card carries the same words this
+ * engine puts on the real quote — a citizen comparing the handset against their
+ * receipt should not find the same surcharge named two different ways.
+ */
+export function ruleLabel(
+  type: TariffRuleType,
+  multiplier: number | null,
+  flat: Paise | null,
+): string {
+  const names: Record<TariffRuleType, string> = {
+    PEAK_HOUR: "Peak hour",
+    WEEKEND: "Weekend",
+    HOLIDAY: "Public holiday",
+    EVENT: "Event",
+    NIGHT: "Night rate",
+    VIP: "VIP zone",
+    COMMERCIAL: "Commercial vehicle",
+    SUBSCRIBER: "Subscriber rate",
+  };
+  const name = names[type];
+  if (flat !== null) return `${name} surcharge`;
+  return multiplier !== null ? `${name} (×${multiplier})` : name;
 }
