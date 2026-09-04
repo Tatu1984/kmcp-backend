@@ -107,4 +107,16 @@ export class RolesService {
   async isZoneScoped(code: RoleCode): Promise<boolean> {
     return (await this.get(code))?.isZoneScoped ?? false;
   }
+
+  /**
+   * The break-glass role, which `can` already waves through.
+   *
+   * Exposed separately for the ownership checks that are decided outside the
+   * permission catalogue — reading a file because it is *yours* is not a
+   * permission anyone can be granted, so those checks need to ask about the
+   * superuser bypass themselves. An unknown role is not one.
+   */
+  async isSuperuser(code: RoleCode): Promise<boolean> {
+    return (await this.get(code))?.isSuperuser ?? false;
+  }
 }

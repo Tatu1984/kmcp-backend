@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
+import { PERMISSIONS, SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
+import { RolesService } from "@/common/rbac/roles.service";
 import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import * as bcrypt from "bcryptjs";
@@ -50,6 +51,7 @@ export class AuthService {
     private readonly audit: AuditService,
     private readonly events: AuthEventService,
     private readonly config: ConfigService<Env, true>,
+    private readonly roles: RolesService,
   ) {}
 
   // ------------------------------------------------------------------ staff
@@ -374,7 +376,33 @@ export class AuthService {
         createdAt: true,
       },
     });
-    return { ...record, zoneIds: user.zoneIds, vendorId: user.vendorId, attendantId: user.attendantId };
+    /**
+     * The caller's effective permissions travel with the principal.
+     *
+     * Without this the portal cannot tell an Auditor that settlement approval
+     * is not theirs — it would render the button, the API would refuse it, and
+     * the user would learn their own access level from a red toast. The only
+     * other source is `/rbac/matrix`, which is itself behind `user.manage`, so
+     * precisely the roles that need this most cannot read it.
+     *
+     * A superuser is unrestricted by definition, so it receives the whole
+     * catalogue rather than an empty set — the same answer `RolesService.can`
+     * gives, expressed as a list.
+     */
+    const role = await this.roles.get(record.role);
+    const permissions = role?.isSuperuser
+      ? [...PERMISSIONS]
+      : [...(role?.permissions ?? [])].sort();
+
+    return {
+      ...record,
+      permissions,
+      isZoneScoped: role?.isZoneScoped ?? false,
+      isSuperuser: role?.isSuperuser ?? false,
+      zoneIds: user.zoneIds,
+      vendorId: user.vendorId,
+      attendantId: user.attendantId,
+    };
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto): Promise<{ changed: true }> {

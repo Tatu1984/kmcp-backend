@@ -4,11 +4,13 @@ import { PaymentMode, PaymentStatus, Prisma, SettlementStatus } from "@prisma/cl
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
 import { AuditService } from "@/common/services/audit.service";
+import { IdempotencyService } from "@/common/services/idempotency.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { LEDGER_ACCOUNTS } from "@/config/app.constants";
 import { SYSTEM_ROLES } from "@/common/rbac/permissions";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped } from "@/common/rbac/scope";
 import type {
   GenerateSettlementDto,
   PayoutSettlementDto,
@@ -17,7 +19,7 @@ import type {
   SettlementQueryDto,
 } from "./dto/settlement.dto";
 
-type Ctx = { ip?: string; requestId?: string };
+type Ctx = { ip?: string; requestId?: string; idempotencyKey?: string };
 
 const SORTABLE = ["periodStart", "periodEnd", "createdAt", "grossCollected", "status"] as const;
 
@@ -65,7 +67,19 @@ export class SettlementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly idempotency: IdempotencyService,
   ) {}
+
+  /**
+   * The idempotency scope for a route, namespaced by the caller.
+   *
+   * Two officers can reasonably pick the same key on the same day. Sharing a
+   * scope between them would answer the second with the first one's settlement,
+   * which for a payout means the wrong vendor's bank reference.
+   */
+  private scope(route: string, user: AuthenticatedUser): string {
+    return `settlement.${route}:${user.id}`;
+  }
 
   private scopeFilter(user: AuthenticatedUser): Prisma.SettlementWhereInput {
     if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) return { vendorId: user.vendorId };
@@ -78,8 +92,7 @@ export class SettlementsService {
   }
 
   async list(query: SettlementQueryDto, user: AuthenticatedUser) {
-    const where: Prisma.SettlementWhereInput = {
-      ...this.scopeFilter(user),
+    const where = scoped<Prisma.SettlementWhereInput>(this.scopeFilter(user), {
       ...(query.status ? { status: query.status } : {}),
       ...(query.vendorId ? { vendorId: query.vendorId } : {}),
       ...(query.from || query.to
@@ -88,7 +101,7 @@ export class SettlementsService {
             periodEnd: { ...(query.to ? { lte: query.to } : {}) },
           }
         : {}),
-    };
+    });
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.settlement.findMany({
@@ -110,7 +123,7 @@ export class SettlementsService {
 
   async findOne(id: string, user: AuthenticatedUser) {
     const settlement = await this.prisma.settlement.findFirst({
-      where: { id, ...this.scopeFilter(user) },
+      where: scoped<Prisma.SettlementWhereInput>(this.scopeFilter(user), { id }),
       select: SETTLEMENT_SELECT,
     });
     if (!settlement) throw AppException.notFound("settlement");
@@ -155,6 +168,22 @@ export class SettlementsService {
    * of double-counting everything that was already banked.
    */
   async generate(dto: GenerateSettlementDto, user: AuthenticatedUser, ctx: Ctx) {
+    // The period is unique per vendor, so a *sequential* re-run is already
+    // refused. What that constraint cannot catch is two requests in flight at
+    // once — a double-click, or a retry after a timeout that in fact succeeded
+    // — where both pass the existence check before either has written. A key
+    // makes the second one a replay instead of a duplicate draft.
+    if (!ctx.idempotencyKey) return { ...(await this.generateOnce(dto, user, ctx)), replayed: false };
+
+    const { value, replayed } = await this.idempotency.run(
+      this.scope("generate", user),
+      ctx.idempotencyKey,
+      () => this.generateOnce(dto, user, ctx),
+    );
+    return { ...value, replayed };
+  }
+
+  private async generateOnce(dto: GenerateSettlementDto, user: AuthenticatedUser, ctx: Ctx) {
     const vendor = await this.prisma.vendor.findUnique({
       where: { id: dto.vendorId },
       select: { id: true, orgName: true, commissionPct: true },
@@ -375,6 +404,22 @@ export class SettlementsService {
    * with the payout id it gets back, so the ledger half stays in one place.
    */
   async payout(id: string, dto: PayoutSettlementDto, user: AuthenticatedUser, ctx: Ctx) {
+    // The status check refuses a second payout once the first has landed, but
+    // only once it has landed. Two concurrent calls both read APPROVED and both
+    // post to the ledger, which double-credits CASH_IN_HAND against a single
+    // transfer — an imbalance an auditor finds months later, not a failed
+    // request now.
+    if (!ctx.idempotencyKey) return { ...(await this.payoutOnce(id, dto, user, ctx)), replayed: false };
+
+    const { value, replayed } = await this.idempotency.run(
+      this.scope("payout", user),
+      ctx.idempotencyKey,
+      () => this.payoutOnce(id, dto, user, ctx),
+    );
+    return { ...value, replayed };
+  }
+
+  private async payoutOnce(id: string, dto: PayoutSettlementDto, user: AuthenticatedUser, ctx: Ctx) {
     const current = await this.require(id, user, [SettlementStatus.APPROVED]);
 
     if (current.vendorShare <= 0) {
@@ -596,7 +641,7 @@ export class SettlementsService {
 
   private async require(id: string, user: AuthenticatedUser, allowed: SettlementStatus[]) {
     const settlement = await this.prisma.settlement.findFirst({
-      where: { id, ...this.scopeFilter(user) },
+      where: scoped<Prisma.SettlementWhereInput>(this.scopeFilter(user), { id }),
       select: SETTLEMENT_SELECT,
     });
     if (!settlement) throw AppException.notFound("settlement");

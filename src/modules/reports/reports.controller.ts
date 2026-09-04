@@ -12,7 +12,6 @@ import {
 } from "@/common/decorators/auth.decorators";
 import { RawResponse } from "@/common/interceptors/response.interceptor";
 import { ReportsService } from "./reports.service";
-import { REPORT_TYPES } from "./report-types";
 import {
   GenerateReportSchema,
   ReportQuerySchema,
@@ -29,11 +28,13 @@ export class ReportsController {
   @RequirePermissions("report.generate")
   @Get("types")
   @ApiOperation({
-    summary: "The report catalogue",
-    description: "Served from the API so the portal cannot offer a report this cannot run.",
+    summary: "The report catalogue, as this caller may run it",
+    description:
+      "Served from the API so the portal cannot offer a report this cannot run — including the " +
+      "three that cover the whole authority and are withheld from a zone-scoped caller.",
   })
-  types() {
-    return REPORT_TYPES;
+  types(@CurrentUser() user: AuthenticatedUser) {
+    return this.reports.catalogue(user);
   }
 
   @RequirePermissions("report.generate")

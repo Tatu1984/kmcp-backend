@@ -8,6 +8,7 @@ import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { SYSTEM_ROLES } from "@/common/rbac/permissions";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 import type { CloseShiftDto, OpenShiftDto, ShiftQueryDto, VerifyShiftDto } from "./dto/shift.dto";
 
 type Ctx = { ip?: string; requestId?: string };
@@ -65,8 +66,8 @@ export class ShiftsService {
     if (user.role === SYSTEM_ROLES.ATTENDANT && user.attendantId) {
       return { attendantId: user.attendantId };
     }
-    if (user.isZoneScoped && user.zoneIds.length > 0) return { zoneId: { in: user.zoneIds } };
-    return {};
+    const zones = zoneScopeOf(user);
+    return zones ? { zoneId: { in: zones } } : {};
   }
 
   /**
@@ -311,8 +312,7 @@ export class ShiftsService {
   }
 
   async list(query: ShiftQueryDto, user: AuthenticatedUser) {
-    const where: Prisma.ShiftWhereInput = {
-      ...this.scopeFilter(user),
+    const where = scoped<Prisma.ShiftWhereInput>(this.scopeFilter(user), {
       ...(query.status ? { status: query.status } : {}),
       ...(query.attendantId ? { attendantId: query.attendantId } : {}),
       ...(query.vendorId ? { vendorId: query.vendorId } : {}),
@@ -321,7 +321,7 @@ export class ShiftsService {
       ...(query.from || query.to
         ? { startAt: { ...(query.from ? { gte: query.from } : {}), ...(query.to ? { lte: query.to } : {}) } }
         : {}),
-    };
+    });
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.shift.findMany({
@@ -338,7 +338,7 @@ export class ShiftsService {
 
   async findOne(id: string, user: AuthenticatedUser) {
     const shift = await this.prisma.shift.findFirst({
-      where: { id, ...this.scopeFilter(user) },
+      where: scoped<Prisma.ShiftWhereInput>(this.scopeFilter(user), { id }),
       select: SHIFT_SELECT,
     });
     if (!shift) throw AppException.notFound("shift");

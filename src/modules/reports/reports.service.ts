@@ -15,8 +15,9 @@ import { Paginated } from "@/common/interceptors/response.interceptor";
 import { skipTake } from "@/common/dto/pagination.dto";
 import { SYSTEM_ROLES } from "@/common/rbac/permissions";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 import type { GenerateReportDto, ReportQueryDto } from "./dto/report.dto";
-import { reportLabel, type ReportKey } from "./report-types";
+import { REPORT_TYPES, reportAudience, reportLabel, type ReportKey } from "./report-types";
 
 type Ctx = { ip?: string; requestId?: string };
 
@@ -60,12 +61,83 @@ export class ReportsService {
     private readonly audit: AuditService,
   ) {}
 
+  /**
+   * Whether this principal may run this report at all.
+   *
+   * Most of the catalogue reads parking sessions, which carry a zone, so a
+   * scoped caller gets a real report about their own ward. Three do not: the
+   * citizen register, the audit trail and vendor settlement read rows that have
+   * no zone on them to filter by.
+   *
+   * They could have been narrowed by a proxy — the citizens who happened to
+   * park in this ward, the settlements of the vendors who operate it — and that
+   * is the option deliberately not taken. "The citizens who parked in my ward"
+   * is a different report from "the citizen register", and returning the first
+   * under the heading of the second is its own kind of wrong: the officer
+   * cannot see that anything was withheld, quotes the total as the authority's
+   * total, and an audit trail with rows silently missing is more dangerous than
+   * no audit trail, because it is the artefact people trust to be complete.
+   *
+   * So a scoped caller is refused outright rather than quietly served a
+   * different report, and `catalogue()` stops offering them the button.
+   *
+   * The one exception is a vendor's own settlement. That is their own money,
+   * the report was already filtered to their vendor id, and refusing it would
+   * take away a statement they are entitled to.
+   */
+  private mayRun(type: ReportKey, user: AuthenticatedUser): boolean {
+    if (reportAudience(type) === "zonal") return true;
+    if (type === "settlement" && user.role === SYSTEM_ROLES.VENDOR && user.vendorId) return true;
+    return zoneScopeOf(user) === null;
+  }
+
+  /**
+   * Public because a scheduled run has to pass the same gate as a pressed
+   * button, and `ReportSchedulesService` needs to apply it at the moment a
+   * schedule is *written* as well as at the moment it fires. Refusing at write
+   * time is a courtesy — the run would refuse anyway, three days later, having
+   * told nobody in the meantime.
+   */
+  assertMayRun(type: ReportKey, user: AuthenticatedUser): void {
+    if (this.mayRun(type, user)) return;
+    throw AppException.forbidden(
+      `The ${reportLabel(type).toLowerCase()} covers the whole authority and has no version ` +
+        "narrowed to a zone. Ask an administrator to run it.",
+    );
+  }
+
+  /**
+   * The catalogue as this caller sees it.
+   *
+   * Served filtered rather than whole, because the grid is built from it: an
+   * unfiltered catalogue puts three tiles on a ward officer's reports screen
+   * that answer 403 when pressed, which reads as a broken portal rather than as
+   * a boundary being held.
+   */
+  catalogue(user: AuthenticatedUser) {
+    return REPORT_TYPES.filter((type) => this.mayRun(type.key, user));
+  }
+
+  /**
+   * Whose report jobs this caller may see.
+   *
+   * A job row is not zone data and cannot be filtered into a ward — but it
+   * carries the requester's name and the parameters they chose, so an
+   * unfiltered history tells a ward officer which zones, vendors and periods
+   * head office has been pulling apart, and hands them the ids to try against
+   * the download route. The line is therefore drawn at authorship: a restricted
+   * caller sees the reports they ran themselves and nobody else's.
+   */
+  private jobScopeOf(user: AuthenticatedUser): Prisma.ReportJobWhereInput {
+    return zoneScopeOf(user) === null ? {} : { requestedById: user.id };
+  }
+
   async list(query: ReportQueryDto, user: AuthenticatedUser) {
-    const where: Prisma.ReportJobWhereInput = {
+    const where = scoped<Prisma.ReportJobWhereInput>(this.jobScopeOf(user), {
       ...(query.type ? { type: query.type } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.mine ? { requestedById: user.id } : {}),
-    };
+    });
 
     const [jobs, total] = await this.prisma.$transaction([
       this.prisma.reportJob.findMany({
@@ -113,6 +185,11 @@ export class ReportsService {
   }
 
   async generate(dto: GenerateReportDto, user: AuthenticatedUser, ctx: Ctx) {
+    // Checked before the row is written as well as inside `build`. A refusal is
+    // not a failed report, and recording it as one would leave a FAILED job in
+    // the history for something that never began.
+    this.assertMayRun(dto.type, user);
+
     const job = await this.prisma.reportJob.create({
       data: {
         type: dto.type,
@@ -165,9 +242,22 @@ export class ReportsService {
     }
   }
 
-  /** Re-runs the stored parameters and returns the file. */
+  /**
+   * Re-runs the stored parameters and returns the file.
+   *
+   * Two things have to hold here, and only one of them used to. Re-running
+   * under the caller's own principal means the rows obey the caller's scope
+   * rather than the requester's — but that was worth nothing for the three
+   * reports whose builders took no principal at all, so an officer who guessed
+   * an administrator's job id was handed the entire citizen register. `build`
+   * now refuses those, and the job itself is looked up through the same
+   * visibility rule as the history, so a job the caller cannot see in the list
+   * cannot be fetched by id either.
+   */
   async download(id: string, user: AuthenticatedUser): Promise<{ filename: string; csv: string }> {
-    const job = await this.prisma.reportJob.findUnique({ where: { id } });
+    const job = await this.prisma.reportJob.findFirst({
+      where: scoped<Prisma.ReportJobWhereInput>(this.jobScopeOf(user), { id }),
+    });
     if (!job) throw AppException.notFound("report");
 
     const params = (job.params ?? {}) as Record<string, unknown>;
@@ -192,6 +282,11 @@ export class ReportsService {
     dto: { from: Date; to: Date; zoneId?: string; vendorId?: string },
     user: AuthenticatedUser,
   ): Promise<ReportTable> {
+    // The choke point. `download` re-enters here without passing through
+    // `generate`, so the gate has to live where every builder is reached from
+    // rather than at the entry the request happened to arrive by.
+    this.assertMayRun(type, user);
+
     switch (type) {
       case "revenue":
         return this.revenue(dto, user);
@@ -218,16 +313,28 @@ export class ReportsService {
     }
   }
 
+  /**
+   * What this caller may be reported on, whatever period they asked for.
+   *
+   * Kept in one place because both `where` builders below need it and both used
+   * to inline it — and inline, spread last, it silently discarded the `zoneId`
+   * the caller had asked for and reported on their own zones under the other
+   * zone's heading.
+   */
+  private sessionScopeOf(user: AuthenticatedUser): Prisma.ParkingSessionWhereInput {
+    if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) return { vendorId: user.vendorId };
+    const zones = zoneScopeOf(user);
+    return zones ? { zoneId: { in: zones } } : {};
+  }
+
   private paymentWhere(
     dto: { from: Date; to: Date; zoneId?: string; vendorId?: string },
     user: AuthenticatedUser,
   ): Prisma.PaymentWhereInput {
-    const session: Prisma.ParkingSessionWhereInput = {
+    const session = scoped<Prisma.ParkingSessionWhereInput>(this.sessionScopeOf(user), {
       ...(dto.zoneId ? { zoneId: dto.zoneId } : {}),
       ...(dto.vendorId ? { vendorId: dto.vendorId } : {}),
-      ...(user.role === SYSTEM_ROLES.VENDOR && user.vendorId ? { vendorId: user.vendorId } : {}),
-      ...(user.isZoneScoped && user.zoneIds.length ? { zoneId: { in: user.zoneIds } } : {}),
-    };
+    });
     return {
       status: { in: CAPTURED },
       paidAt: { gte: dto.from, lte: dto.to },
@@ -239,13 +346,11 @@ export class ReportsService {
     dto: { from: Date; to: Date; zoneId?: string; vendorId?: string },
     user: AuthenticatedUser,
   ): Prisma.ParkingSessionWhereInput {
-    return {
+    return scoped<Prisma.ParkingSessionWhereInput>(this.sessionScopeOf(user), {
       startAt: { gte: dto.from, lte: dto.to },
       ...(dto.zoneId ? { zoneId: dto.zoneId } : {}),
       ...(dto.vendorId ? { vendorId: dto.vendorId } : {}),
-      ...(user.role === SYSTEM_ROLES.VENDOR && user.vendorId ? { vendorId: user.vendorId } : {}),
-      ...(user.isZoneScoped && user.zoneIds.length ? { zoneId: { in: user.zoneIds } } : {}),
-    };
+    });
   }
 
   private async revenue(
@@ -459,6 +564,15 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Vendor settlements for a period.
+   *
+   * Vendor-scoped and nothing else, because a Settlement has no zone on it to
+   * scope by: one row is a vendor's whole period across every kerb they hold,
+   * and slicing it by ward would produce a figure that reconciles against
+   * nothing and matches no payout. `mayRun` is what keeps a ward officer out of
+   * it; the filter below is what keeps one vendor out of another's.
+   */
   private async settlement(
     dto: { from: Date; to: Date; vendorId?: string },
     user: AuthenticatedUser,
@@ -629,6 +743,18 @@ export class ReportsService {
     };
   }
 
+  /**
+   * The citizen register for a period.
+   *
+   * It takes no principal and applies no scope, and that is deliberate rather
+   * than forgotten: `mayRun` above admits only a caller with no zone
+   * restriction at all, so by the time execution arrives here there is nothing
+   * left to narrow. A citizen row carries no zone in any case — the closest
+   * proxy is where they happened to park, which answers a different question.
+   *
+   * If that gate is ever moved or widened, this method is what it was there to
+   * protect: every citizen in the authority, with mobile number and email.
+   */
   private async citizens(dto: { from: Date; to: Date }): Promise<ReportTable> {
     const users = await this.prisma.user.findMany({
       where: {
@@ -753,6 +879,14 @@ export class ReportsService {
     };
   }
 
+  /**
+   * The complete before/after trail for a period.
+   *
+   * Unscoped for the same reason as the citizen register, and more emphatically
+   * so: an audit trail is trusted precisely because it is whole. A copy with
+   * some rows quietly dropped still looks complete to whoever reads it, which
+   * is why `mayRun` refuses a scoped caller instead of filtering for them.
+   */
   private async auditTrail(dto: { from: Date; to: Date }): Promise<ReportTable> {
     const entries = await this.prisma.auditLog.findMany({
       where: { createdAt: { gte: dto.from, lte: dto.to } },

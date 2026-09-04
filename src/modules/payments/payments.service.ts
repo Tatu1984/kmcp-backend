@@ -9,6 +9,7 @@ import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { financialYear, generateReceiptNumber } from "@/common/utils/plate.util";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 import { RazorpayService } from "./razorpay.service";
 import type {
   CollectPaymentDto,
@@ -77,10 +78,8 @@ export class PaymentsService {
     if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) {
       return { session: { vendorId: user.vendorId } };
     }
-    if (user.isZoneScoped && user.zoneIds.length > 0) {
-      return { session: { zoneId: { in: user.zoneIds } } };
-    }
-    return {};
+    const zones = zoneScopeOf(user);
+    return zones ? { session: { zoneId: { in: zones } } } : {};
   }
 
   /**
@@ -515,8 +514,9 @@ export class PaymentsService {
   }
 
   async list(query: PaymentQueryDto, user: AuthenticatedUser) {
-    const where: Prisma.PaymentWhereInput = {
-      ...this.scopeFilter(user),
+    // `?vendorId=` writes the same `session` key the scope uses, so merging the
+    // two would not narrow the scope but replace it wholesale.
+    const where = scoped<Prisma.PaymentWhereInput>(this.scopeFilter(user), {
       ...(query.status ? { status: query.status } : {}),
       ...(query.mode ? { mode: query.mode } : {}),
       ...(query.sessionId ? { sessionId: query.sessionId } : {}),
@@ -534,7 +534,7 @@ export class PaymentsService {
             ],
           }
         : {}),
-    };
+    });
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.payment.findMany({
@@ -551,7 +551,7 @@ export class PaymentsService {
 
   async findOne(id: string, user: AuthenticatedUser) {
     const payment = await this.prisma.payment.findFirst({
-      where: { id, ...this.scopeFilter(user) },
+      where: scoped<Prisma.PaymentWhereInput>(this.scopeFilter(user), { id }),
       select: PAYMENT_SELECT,
     });
     if (!payment) throw AppException.notFound("payment");
@@ -560,13 +560,12 @@ export class PaymentsService {
 
   /** Collection totals for a day, split the way a reconciliation needs them. */
   async summary(user: AuthenticatedUser, from?: Date, to?: Date) {
-    const where: Prisma.PaymentWhereInput = {
-      ...this.scopeFilter(user),
+    const where = scoped<Prisma.PaymentWhereInput>(this.scopeFilter(user), {
       status: { in: [PaymentStatus.CAPTURED, PaymentStatus.PARTIALLY_REFUNDED] },
       ...(from || to
         ? { paidAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
         : {}),
-    };
+    });
 
     const [byMode, totals] = await Promise.all([
       this.prisma.payment.groupBy({ by: ["mode"], where, _sum: { amount: true }, _count: { _all: true } }),

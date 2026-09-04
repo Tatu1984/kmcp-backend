@@ -8,6 +8,7 @@ import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { SYSTEM_ROLES } from "@/common/rbac/permissions";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 import type {
   AssignIncidentDto,
   CreateIncidentDto,
@@ -89,10 +90,9 @@ export class IncidentsService {
         OR: [{ session: { vendorId: user.vendorId } }, ...(zoneIds.length ? [{ zoneId: { in: zoneIds } }] : [])],
       };
     }
-    if (user.isZoneScoped && user.zoneIds.length > 0) {
-      return {
-        OR: [{ zoneId: { in: user.zoneIds } }, { session: { zoneId: { in: user.zoneIds } } }],
-      };
+    const zones = zoneScopeOf(user);
+    if (zones) {
+      return { OR: [{ zoneId: { in: zones } }, { session: { zoneId: { in: zones } } }] };
     }
     return {};
   }
@@ -155,7 +155,7 @@ export class IncidentsService {
   private async require(id: string, user: AuthenticatedUser): Promise<IncidentRow> {
     const scope = await this.scopeFilter(user);
     const incident = await this.prisma.incident.findFirst({
-      where: { id, ...scope },
+      where: scoped<Prisma.IncidentWhereInput>(scope, { id }),
       select: INCIDENT_SELECT,
     });
     if (!incident) throw AppException.notFound("incident");
@@ -164,8 +164,9 @@ export class IncidentsService {
 
   async list(query: IncidentQueryDto, user: AuthenticatedUser) {
     const scope = await this.scopeFilter(user);
-    const where: Prisma.IncidentWhereInput = {
-      ...scope,
+    // The zone scope here is itself an `OR`, and so is the free-text search —
+    // merged into one literal, the search would have replaced the scope.
+    const where = scoped<Prisma.IncidentWhereInput>(scope, {
       ...(query.status ? { status: query.status } : {}),
       ...(query.openOnly ? { status: { in: OPEN_STATUSES } } : {}),
       ...(query.type ? { type: query.type } : {}),
@@ -189,7 +190,7 @@ export class IncidentsService {
             ],
           }
         : {}),
-    };
+    });
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.incident.findMany({

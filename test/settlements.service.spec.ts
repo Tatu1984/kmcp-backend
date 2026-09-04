@@ -84,8 +84,18 @@ function makeService(overrides: Record<string, any> = {}) {
   };
 
   const audit = { record: vi.fn().mockResolvedValue(undefined) };
+
+  // No key is passed by these cases, so the store is never consulted; it is
+  // here because the constructor asks for it.
+  const idempotency = {
+    run: vi.fn(async (_scope: string, _key: string, work: () => Promise<unknown>) => ({
+      value: await work(),
+      replayed: false,
+    })),
+  };
+
   return {
-    service: new SettlementsService(prisma, audit as any),
+    service: new SettlementsService(prisma, audit as any, idempotency as any),
     prisma,
     audit,
     created,

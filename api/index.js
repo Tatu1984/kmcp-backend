@@ -37,6 +37,52 @@ function getApp() {
 }
 
 /**
+ * A boot failure is the one error the exception filter can never see, because
+ * there is no app to run it. It is also the worst one to leave unreported: the
+ * whole API is down and the only trace is a line in the platform log.
+ *
+ * Everything here is best-effort and wrapped, because a failure to report a
+ * failure must not replace the real error with a less useful one. `dist/main.js`
+ * imports `dist/instrument.js` at its top, so the SDK is already started by the
+ * time `createApp()` throws; if the require itself was what failed, this is a
+ * no-op and the caller still gets the BOOTSTRAP_FAILED envelope below.
+ */
+async function reportBootstrapFailure(req, error) {
+  try {
+    const sentry = require("../dist/observability/sentry.js");
+    if (!sentry.initSentry()) return;
+    sentry.reportException(error, {
+      requestId: req.headers["x-request-id"] || "bootstrap",
+      code: "BOOTSTRAP_FAILED",
+      status: 500,
+      method: req.method,
+      url: req.url,
+    });
+    await sentry.flushErrorReports();
+  } catch {
+    // Nothing further to try — console.error above is the remaining record.
+  }
+}
+
+/** Resolves once the response has been written, however it ended. */
+function responseSettled(res) {
+  if (res.writableEnded) return Promise.resolve();
+  return new Promise((resolve) => {
+    res.once("finish", resolve);
+    res.once("close", resolve);
+  });
+}
+
+/** Best-effort delivery of anything the request queued. Never throws. */
+async function flushReports() {
+  try {
+    await require("../dist/observability/sentry.js").flushErrorReports();
+  } catch {
+    // The SDK is not loaded, which means nothing was queued either.
+  }
+}
+
+/**
  * Boot failures must still answer with CORS headers, or the browser reports an
  * opaque network error and the real reason — a missing env var, an unreachable
  * database — never reaches whoever is debugging it.
@@ -61,6 +107,7 @@ module.exports = async function handler(req, res) {
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error("Bootstrap failed", error);
+    await reportBootstrapFailure(req, error);
     allowOrigin(req, res);
     res.statusCode = 500;
     res.setHeader("content-type", "application/json");
@@ -80,5 +127,13 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  return instance(req, res);
+  instance(req, res);
+
+  /**
+   * The handler resolves only once the response is written, so the flush below
+   * happens while the container is still alive. Without it the SDK's background
+   * batching would be racing a freeze it always loses.
+   */
+  await responseSettled(res);
+  await flushReports();
 };

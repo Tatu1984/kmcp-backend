@@ -141,6 +141,12 @@ enum IncidentStatus {
   REJECTED
 }
 
+/// A file's purpose decides who may be issued a read URL for it — see
+/// MediaAccessService, where this enum is a total map. A generated document
+/// therefore needs its own value rather than borrowing REPORT_EXPORT: a
+/// settlement statement is read by the vendor it pays, a shift slip by the
+/// attendant who is accountable for the cash, and a tariff board by anyone who
+/// may look at the zone. Those are three different audiences.
 enum MediaPurpose {
   SESSION_EVIDENCE_START
   SESSION_EVIDENCE_END
@@ -150,6 +156,9 @@ enum MediaPurpose {
   REPORT_EXPORT
   INCIDENT_PHOTO
   PROFILE
+  SETTLEMENT_STATEMENT
+  SHIFT_SLIP
+  ZONE_SIGNAGE
 }
 
 enum NotificationChannel {
@@ -175,11 +184,50 @@ enum LocationConsentStatus {
   DENIED
 }
 
+/// What a consent record is *about*.
+///
+/// `LocationConsent` names its purpose in the model name, which is why it can
+/// only ever answer one question. A DPDP consent is always consent *to a
+/// specified purpose*, so the purpose has to be a column before the authority
+/// can demonstrate anything beyond "they tapped yes once".
+enum ConsentPurpose {
+  /// Precise browser or handset GPS, as distinct from the coarse city an IP implies.
+  PRECISE_LOCATION
+  /// Timestamped photographs of the vehicle at the kerb.
+  EVIDENCE_PHOTOGRAPHY
+  /// Transactional receipts and alerts over SMS, WhatsApp and email.
+  SERVICE_MESSAGES
+  /// Announcements that are not about a session the person is in.
+  ANNOUNCEMENTS
+}
+
+/// The act being recorded, not the state that resulted from it. A ledger of
+/// states could not tell a grant that was never withdrawn from one that was
+/// withdrawn and given again.
+enum ConsentAction {
+  GRANTED
+  WITHDRAWN
+  DENIED
+}
+
 enum ReportStatus {
   QUEUED
   RUNNING
   COMPLETED
   FAILED
+}
+
+/// How often a `ReportSchedule` fires.
+///
+/// Three values, not a cron expression. A municipal authority asks for the
+/// daily collection, the Monday morning summary and the month-end statement;
+/// nobody has ever asked for "every third Tuesday at 04:17". A cron string
+/// would buy that at the cost of a parser, an unvalidatable text field in the
+/// portal and a schedule whose next run nobody can predict by reading the row.
+enum ReportFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
 }
 
 // ---------------------------------------------------------------- identity
@@ -368,6 +416,8 @@ model Zone {
   status                ZoneStatus @default(OPEN)
   closureReason         String?
   closureUntil          DateTime?
+  /// The printable tariff board and QR notice last generated for this zone.
+  signageMediaId        String?
   createdAt             DateTime   @default(now())
   updatedAt             DateTime   @updatedAt
 
@@ -646,6 +696,9 @@ model Shift {
   status         ShiftStatus @default(OPEN)
   verifiedBy     String?
   verifiedAt     DateTime?
+  /// The cash-handover slip generated for this shift, mirroring
+  /// Receipt.pdfMediaId and Settlement.statementMediaId.
+  slipMediaId    String?
 
   sessions ParkingSession[]
   payments Payment[]
@@ -963,6 +1016,51 @@ model LocationConsent {
   @@index([status])
 }
 
+/// An append-only record of every consent decision, and the notice it was
+/// given against.
+///
+/// `LocationConsent` above is the *current* answer: one row per user, upserted
+/// on every change. That is what the app needs to know whether it may ask for a
+/// fix right now, and it is useless as evidence — a withdrawal overwrites the
+/// grant, so after it there is nothing left to show that consent was ever
+/// given, when, or against what wording.
+///
+/// Section 6 of the DPDP Act puts the burden of proof on the data fiduciary:
+/// the authority must be able to demonstrate that notice was served and consent
+/// obtained. That is a history, not a flag, so it lives in its own table and
+/// nothing in the codebase updates or deletes a row of it.
+model ConsentRecord {
+  id      String         @id @default(cuid())
+  userId  String
+  purpose ConsentPurpose
+  action  ConsentAction
+
+  /// The notice the person was shown, identified well enough to reproduce it:
+  /// the CMS slug and the timestamp that version of the page carried. Without
+  /// both, "they consented" is a claim about a document nobody can produce.
+  noticeSlug    String?
+  noticeVersion DateTime?
+
+  /// How the decision reached us — "CITIZEN_APP", "PORTAL", "ATTENDANT_APP".
+  channel String
+
+  /// Evidence of the act itself.
+  ip        String?
+  userAgent String?
+  requestId String?
+
+  /// Set only when an officer recorded the decision on someone's behalf, which
+  /// is a materially weaker record than a self-service one and must be visible
+  /// as such.
+  recordedById String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, purpose, createdAt])
+  @@index([purpose, action, createdAt])
+  @@index([createdAt])
+}
+
 model SyncLog {
   id            String   @id @default(cuid())
   attendantId   String
@@ -1024,6 +1122,77 @@ model ReportJob {
   completedAt   DateTime?
 
   @@index([requestedById, createdAt])
+}
+
+/// A report the authority wants run again and again without being asked.
+///
+/// The period is deliberately *not* stored. A schedule holds the question —
+/// which report, which zone, which vendor — and the runner derives the window
+/// from the recurrence at the moment it fires, so "the daily collection" always
+/// means yesterday rather than the fortnight that happened to be on screen when
+/// somebody set it up.
+///
+/// ## Why the clock is stored in pieces
+///
+/// `hour`, `minute`, `weekday`, `dayOfMonth` and `timezone` describe a *local
+/// wall-clock intent*, and `nextRunAt` is the UTC instant that intent resolves
+/// to. Storing only the instant would lose the intent: the officer asked for
+/// "Monday at 08:00 in Kolkata", and a stored 02:30 UTC cannot say whether that
+/// was the intent or a coincidence. Every timestamp in this database is UTC and
+/// every screen renders in Asia/Kolkata, so an authority that only ever wrote
+/// UTC would find its Monday morning summary arriving on Sunday afternoon.
+///
+/// `timezone` is a column rather than a constant because it is the *authority's*
+/// intent, not the server's, and a deployment in another state should not have
+/// to redefine the platform to say so. It defaults to Asia/Kolkata, which is
+/// what every existing screen already renders in.
+///
+/// ## Ownership
+///
+/// `ownerId` is not a foreign key, matching `ReportJob.requestedById` beside it.
+/// More importantly it is the principal every run executes as: a schedule is a
+/// standing instruction from one officer, and the runner rebuilds that officer's
+/// scope and puts the report through the same authorisation gate as the button
+/// would. It is never taken from a request body.
+model ReportSchedule {
+  id           String          @id @default(cuid())
+  /// What the officer called it. Shown in the portal and in the delivery.
+  name         String
+  /// A key from the report catalogue, exactly as `ReportJob.type` holds it.
+  type         String
+  /// `{ zoneId, vendorId, format }` — everything but the period.
+  params       Json
+  frequency    ReportFrequency
+  /// Local hour and minute in `timezone`, 0–23 and 0–59.
+  hour         Int             @default(6)
+  minute       Int             @default(0)
+  /// ISO weekday, 1 = Monday … 7 = Sunday. Set for WEEKLY, null otherwise.
+  weekday      Int?
+  /// 1–31, clamped to the last day of a short month. Set for MONTHLY.
+  dayOfMonth   Int?
+  /// An IANA zone name. Validated on write; the platform's own is Asia/Kolkata.
+  timezone     String          @default("Asia/Kolkata")
+  /// NotificationChannel names the finished report is announced on.
+  channels     String[]
+  ownerId      String
+  isActive     Boolean         @default(true)
+  /// The UTC instant the local intent above next resolves to. The runner's index.
+  nextRunAt    DateTime
+  lastRunAt    DateTime?
+  /// The last run's ReportStatus, as a string — a schedule has no status of its own.
+  lastStatus   String?
+  lastError    String?
+  /// The ReportJob the last run produced, so the history screen can be reached.
+  lastJobId    String?
+  /// Consecutive failures. Reset to zero by any success; a schedule that reaches
+  /// the cap is deactivated rather than retried forever.
+  failureCount Int             @default(0)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  /// The runner's only query: active schedules that are due, oldest first.
+  @@index([isActive, nextRunAt])
+  @@index([ownerId, createdAt])
 }
 
 model OtpRequest {

@@ -1,5 +1,11 @@
 import { Injectable } from "@nestjs/common";
-import { AuthEventType, LocationConsentStatus, Prisma } from "@prisma/client";
+import {
+  AuthEventType,
+  ConsentAction,
+  ConsentPurpose,
+  LocationConsentStatus,
+  Prisma,
+} from "@prisma/client";
 
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
@@ -7,6 +13,7 @@ import { AuditService } from "@/common/services/audit.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { skipTake } from "@/common/dto/pagination.dto";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { ConsentService } from "@/modules/privacy/consent.service";
 import { AuthEventService } from "./auth-event.service";
 import type { ActivityQueryDto, ApproveEventDto, ConsentDto } from "./dto/activity.dto";
 
@@ -16,6 +23,7 @@ export class ActivityService {
     private readonly prisma: PrismaService,
     private readonly events: AuthEventService,
     private readonly audit: AuditService,
+    private readonly consent: ConsentService,
   ) {}
 
   // ---------------------------------------------------------------- overview
@@ -318,8 +326,35 @@ export class ActivityService {
     );
   }
 
-  async setConsent(user: AuthenticatedUser, dto: ConsentDto, userAgent?: string) {
+  /**
+   * Records the decision, and records that it was made.
+   *
+   * The upsert below is the *current* answer — one row per user, overwritten on
+   * every change, which is what the app reads before asking the browser for a
+   * fix. It is not evidence: after a withdrawal there is nothing left in it to
+   * show consent was ever given. So the ledger entry goes alongside it, stamped
+   * with the version of the privacy notice in force at that moment. See
+   * ConsentService for why that matters under section 6.
+   */
+  async setConsent(
+    user: AuthenticatedUser,
+    dto: ConsentDto,
+    userAgent?: string,
+    ctx: { ip?: string; requestId?: string } = {},
+  ) {
     const granted = dto.status === LocationConsentStatus.GRANTED;
+
+    await this.consent.record(
+      user.id,
+      ConsentPurpose.PRECISE_LOCATION,
+      granted
+        ? ConsentAction.GRANTED
+        : dto.status === LocationConsentStatus.DENIED
+          ? ConsentAction.DENIED
+          : ConsentAction.WITHDRAWN,
+      { channel: "PORTAL", userAgent, ip: ctx.ip, requestId: ctx.requestId },
+    );
+
     return this.prisma.locationConsent.upsert({
       where: { userId: user.id },
       create: {

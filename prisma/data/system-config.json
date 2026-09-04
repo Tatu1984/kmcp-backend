@@ -38,5 +38,49 @@
   {
     "key": "settlement.blockPayoutUntilKyc",
     "value": true
+  },
+  {
+    "key": "retention.otpRequestDays",
+    "value": 7
+  },
+  {
+    "key": "retention.notificationDays",
+    "value": 180
+  },
+  {
+    "key": "retention.loginSessionDays",
+    "value": 180
+  },
+  {
+    "key": "retention.authEventDays",
+    "value": 180
+  },
+  {
+    "key": "retention.reportExportDays",
+    "value": 30
+  },
+  {
+    "key": "retention.sessionGpsDays",
+    "value": 90
+  },
+  {
+    "key": "retention.evidenceMediaDays",
+    "value": 90
+  },
+  {
+    "key": "retention.auditLogDays",
+    "value": 2555
+  },
+  {
+    "key": "retention.dryRun",
+    "value": true
+  },
+  {
+    "key": "retention.legalHold",
+    "value": false
+  },
+  {
+    "key": "retention.maxRowsPerClass",
+    "value": 500
   }
 ]

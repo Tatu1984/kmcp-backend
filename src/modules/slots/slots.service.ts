@@ -7,6 +7,7 @@ import { AuditService } from "@/common/services/audit.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 import type {
   BulkCreateSlotsDto,
   CreateSlotDto,
@@ -44,13 +45,28 @@ export class SlotsService {
   ) {}
 
   private scopeFilter(user: AuthenticatedUser): Prisma.SlotWhereInput {
-    if (!user.isZoneScoped || user.zoneIds.length === 0) return {};
-    return { zoneId: { in: user.zoneIds } };
+    const zones = zoneScopeOf(user);
+    return zones ? { zoneId: { in: zones } } : {};
   }
 
-  private async assertZone(zoneId: string) {
-    const zone = await this.prisma.zone.findUnique({
-      where: { id: zoneId },
+  /** The same scope, expressed against the zone itself rather than its bays. */
+  private zoneScopeFilter(user: AuthenticatedUser): Prisma.ZoneWhereInput {
+    const zones = zoneScopeOf(user);
+    return zones ? { id: { in: zones } } : {};
+  }
+
+  /**
+   * Resolves the zone, within what this caller may see.
+   *
+   * Scoped, because the zone row itself is the answer to a question. The
+   * summary clamped its counts to the officer's own zones and then returned
+   * another zone's code, name and capacity above them — so the officer learned
+   * that a zone exists, what it is called and how big it is, and read their own
+   * numbers under its name.
+   */
+  private async assertZone(zoneId: string, user: AuthenticatedUser) {
+    const zone = await this.prisma.zone.findFirst({
+      where: scoped<Prisma.ZoneWhereInput>(this.zoneScopeFilter(user), { id: zoneId }),
       select: { id: true, code: true, name: true, capacity: true },
     });
     if (!zone) throw AppException.notFound("zone");
@@ -58,14 +74,13 @@ export class SlotsService {
   }
 
   async list(query: SlotQueryDto, user: AuthenticatedUser) {
-    const where: Prisma.SlotWhereInput = {
-      ...this.scopeFilter(user),
+    const where = scoped<Prisma.SlotWhereInput>(this.scopeFilter(user), {
       ...(query.zoneId ? { zoneId: query.zoneId } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.type ? { type: query.type } : {}),
       ...(query.isReserved !== undefined ? { isReserved: query.isReserved } : {}),
       ...(query.q ? { code: { contains: query.q, mode: "insensitive" } } : {}),
-    };
+    });
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.slot.findMany({
@@ -82,8 +97,8 @@ export class SlotsService {
 
   /** Bay counts by status and type — what the zone detail screen draws. */
   async summary(zoneId: string, user: AuthenticatedUser) {
-    const zone = await this.assertZone(zoneId);
-    const where: Prisma.SlotWhereInput = { zoneId, ...this.scopeFilter(user) };
+    const zone = await this.assertZone(zoneId, user);
+    const where = scoped<Prisma.SlotWhereInput>(this.scopeFilter(user), { zoneId });
 
     const [byStatus, byType, total, activeSessions] = await Promise.all([
       this.prisma.slot.groupBy({ by: ["status"], where, _count: { _all: true } }),
@@ -107,7 +122,7 @@ export class SlotsService {
   }
 
   async create(dto: CreateSlotDto, user: AuthenticatedUser, ctx: Ctx) {
-    await this.assertZone(dto.zoneId);
+    await this.assertZone(dto.zoneId, user);
 
     const clash = await this.prisma.slot.findUnique({
       where: { zoneId_code: { zoneId: dto.zoneId, code: dto.code } },
@@ -137,7 +152,7 @@ export class SlotsService {
    * repeated safely after a partial failure.
    */
   async bulkCreate(dto: BulkCreateSlotsDto, user: AuthenticatedUser, ctx: Ctx) {
-    const zone = await this.assertZone(dto.zoneId);
+    const zone = await this.assertZone(dto.zoneId, user);
 
     const codes: string[] = [];
     for (let n = dto.from; n <= dto.to; n += 1) {

@@ -8,6 +8,7 @@ import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { boundingBox, distanceMetres, withinZone, type GeoPolygon } from "@/common/utils/geo.util";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 import type {
   CreateZoneDto,
   NearbyDto,
@@ -52,8 +53,8 @@ export class ZonesService {
    * query, not filtered afterwards, so a scoped caller cannot page past it.
    */
   private scopeFilter(user: AuthenticatedUser): Prisma.ZoneWhereInput {
-    if (!user.isZoneScoped || user.zoneIds.length === 0) return {};
-    return { id: { in: user.zoneIds } };
+    const zones = zoneScopeOf(user);
+    return zones ? { id: { in: zones } } : {};
   }
 
   private async withOccupancy<T extends { id: string; capacity: number }>(zones: T[]) {
@@ -81,8 +82,7 @@ export class ZonesService {
   }
 
   async list(query: ZoneQueryDto, user: AuthenticatedUser) {
-    const where: Prisma.ZoneWhereInput = {
-      ...this.scopeFilter(user),
+    const where = scoped<Prisma.ZoneWhereInput>(this.scopeFilter(user), {
       ...(query.status ? { status: query.status } : {}),
       ...(query.wardId ? { wardId: query.wardId } : {}),
       ...(query.vendorId
@@ -96,7 +96,7 @@ export class ZonesService {
             ],
           }
         : {}),
-    };
+    });
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.zone.findMany({
@@ -115,7 +115,7 @@ export class ZonesService {
 
   async findOne(id: string, user: AuthenticatedUser) {
     const zone = await this.prisma.zone.findFirst({
-      where: { id, ...this.scopeFilter(user) },
+      where: scoped<Prisma.ZoneWhereInput>(this.scopeFilter(user), { id }),
       select: {
         ...ZONE_SELECT,
         _count: { select: { slots: true, sessions: true } },
@@ -363,7 +363,7 @@ export class ZonesService {
    */
   async resolveByLocation(lat: number, lng: number, user: AuthenticatedUser) {
     const candidates = await this.prisma.zone.findMany({
-      where: { status: ZoneStatus.OPEN, ...this.scopeFilter(user) },
+      where: scoped<Prisma.ZoneWhereInput>(this.scopeFilter(user), { status: ZoneStatus.OPEN }),
       select: {
         id: true,
         code: true,

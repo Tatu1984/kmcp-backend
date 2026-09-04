@@ -23,6 +23,8 @@ export const HEADERS = {
   clientVersion: "x-client-version",
   idempotencyKey: "idempotency-key",
   requestId: "x-request-id",
+  /** Alternative to `Authorization: Bearer` for a scheduler that cannot set one. */
+  cronSecret: "x-cron-secret",
 } as const;
 
 /** Accounts used by the double-entry settlement ledger. */

@@ -16,5 +16,19 @@
       "source": "/(.*)",
       "destination": "/api"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/v1/cron/overstay-sweep",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/v1/cron/retention-purge",
+      "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/v1/cron/report-schedules",
+      "schedule": "*/15 * * * *"
+    }
   ]
 }

@@ -1,12 +1,34 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { config as loadEnv } from "dotenv";
 import { PrismaClient, SlotType, UserStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import * as bcrypt from "bcryptjs";
 import { seedOperations } from "./seed-operations";
+import { seedHistory } from "./seed-history";
+
+/**
+ * Load `.env` before touching `process.env`.
+ *
+ * Prisma 7 stops auto-loading dotenv once a `prisma.config.ts` is present, and
+ * the workaround documented there — `set -a && . ./.env && set +a` before every
+ * command — is easy to forget and fails obscurely: an unset `DATABASE_URL`
+ * becomes an empty connection string and the seed reports that the *database
+ * does not exist* rather than that the address was never configured.
+ *
+ * An environment already carrying the variable wins, so CI and the deployment
+ * are unaffected: `override` is left off deliberately.
+ */
+loadEnv();
+
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL is not set. Put it in kmcp-backend/.env, or export it before running the seed.",
+  );
+}
 
 const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? "" }),
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
 });
 
 /**
@@ -103,6 +125,25 @@ async function main() {
   // Geography, kerb, operators, staff, tariffs and sessions — everything the
   // portal needs in order to show something other than an empty state.
   await seedOperations(prisma);
+
+  /**
+   * Then thirty days of what happened on that kerb.
+   *
+   * Separate from the configuration above because the two answer different
+   * questions and age differently: a ward list is correct until the authority
+   * redraws it, while "revenue today" is wrong the day after it is written.
+   * `seedHistory` regenerates relative to now and removes its own previous
+   * output, so it is safe to re-run whenever the data has gone stale.
+   *
+   * Set `SEED_HISTORY=false` to load only the configuration — which is what a
+   * production cutover wants, where the history is real.
+   */
+  if (process.env.SEED_HISTORY !== "false") {
+    console.log("");
+    await seedHistory(prisma);
+  } else {
+    console.log("\n· history skipped (SEED_HISTORY=false)");
+  }
 
   console.log("\nSeed complete.");
 }

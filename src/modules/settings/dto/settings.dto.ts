@@ -7,7 +7,18 @@ import { z } from "zod";
  * `zoneScope:<userId>` rows live in the same table but are not configuration —
  * they are managed through user administration and hidden from this surface.
  */
-export const CONFIG_NAMESPACES = ["ops", "tax", "settlement", "notification", "app"] as const;
+export const CONFIG_NAMESPACES = [
+  "ops",
+  "tax",
+  "settlement",
+  "notification",
+  "app",
+  // How long each class of record is kept, plus the two brakes on the purge
+  // that enforces it. Configuration rather than constants because the Act makes
+  // the retention decision the authority's, not the vendor's — see
+  // `modules/privacy/retention.policy.ts`.
+  "retention",
+] as const;
 
 export const ConfigKeySchema = z
   .string()

@@ -1,5 +1,7 @@
 import { SetMetadata, createParamDecorator, type ExecutionContext } from "@nestjs/common";
 import type { Request } from "express";
+import { HEADERS } from "@/config/app.constants";
+import { AppException } from "../errors/app.exception";
 import type { Permission, RoleCode } from "../rbac/permissions";
 
 export const IS_PUBLIC_KEY = "kmcp:isPublic";
@@ -50,6 +52,28 @@ export const CurrentUser = createParamDecorator(
 export const RequestId = createParamDecorator((_: unknown, ctx: ExecutionContext) => {
   const request = ctx.switchToHttp().getRequest<Request & { requestId?: string }>();
   return request.requestId ?? "unknown";
+});
+
+/**
+ * Injects the client's `Idempotency-Key`, if it sent one.
+ *
+ * Optional throughout: a caller that sends no key gets exactly the behaviour it
+ * has today. A caller that sends one is making a deliberate promise — "this is
+ * the same request as before" — so a malformed key is refused rather than
+ * quietly ignored, since silently dropping it would leave the client believing
+ * it was protected when it was not.
+ */
+export const IdempotencyKey = createParamDecorator((_: unknown, ctx: ExecutionContext) => {
+  const request = ctx.switchToHttp().getRequest<Request>();
+  const key = request.header(HEADERS.idempotencyKey)?.trim();
+  if (!key) return undefined;
+
+  if (key.length < 8 || key.length > 128) {
+    throw new AppException("VALIDATION_FAILED", [
+      { field: HEADERS.idempotencyKey, issue: "must be between 8 and 128 characters" },
+    ]);
+  }
+  return key;
 });
 
 /** Injects the client IP and user agent for the audit trail. */

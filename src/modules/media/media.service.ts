@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { MediaPurpose, Prisma } from "@prisma/client";
 import { GetObjectCommand, PutObjectCommand, S3Client, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
@@ -11,6 +11,7 @@ import { AuditService } from "@/common/services/audit.service";
 import type { Env } from "@/config/env.config";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
 import type { ConfirmUploadDto, RequestUploadDto } from "./dto/media.dto";
+import { MediaAccessService } from "./media-access.service";
 
 type Ctx = { ip?: string; requestId?: string };
 
@@ -24,6 +25,12 @@ type Ctx = { ip?: string; requestId?: string };
  *
  * Keys are server-generated. A client that chose its own could overwrite
  * somebody else's evidence by naming it.
+ *
+ * Reads are authorised per file. Uploading is open to any authenticated
+ * account, because photographing a plate and supplying a KYC document are both
+ * ordinary work — but a signed read URL is a bearer credential for the bytes,
+ * so who may be issued one is decided by MediaAccessService before anything is
+ * signed.
  */
 @Injectable()
 export class MediaService {
@@ -34,6 +41,7 @@ export class MediaService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService<Env, true>,
     private readonly audit: AuditService,
+    private readonly access: MediaAccessService,
   ) {}
 
   /** Built lazily so the API still boots when storage is not configured yet. */
@@ -81,6 +89,83 @@ export class MediaService {
     const dd = String(now.getUTCDate()).padStart(2, "0");
     const extension = mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") ?? "bin";
     return `${purpose.toLowerCase()}/${yyyy}/${mm}/${dd}/${randomUUID()}.${extension}`;
+  }
+
+  /**
+   * The key a generated document lives at.
+   *
+   * Unlike `buildKey` there is no random component: the address *is* the
+   * fingerprint of the record the document renders, so asking for the same
+   * receipt twice asks for the same object. `anchor` is the record's own date
+   * rather than today's, which keeps the whole key deterministic while still
+   * partitioning by date for the bucket lifecycle rules.
+   */
+  documentKey(purpose: MediaPurpose, anchor: Date, digest: string, extension = "pdf"): string {
+    const yyyy = anchor.getUTCFullYear();
+    const mm = String(anchor.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(anchor.getUTCDate()).padStart(2, "0");
+    return `${purpose.toLowerCase()}/${yyyy}/${mm}/${dd}/${digest}.${extension}`;
+  }
+
+  /** The stored file at a key, or null. How a regeneration finds its predecessor. */
+  findByKey(key: string) {
+    return this.prisma.media.findUnique({ where: { key } });
+  }
+
+  /**
+   * Stores bytes this API produced itself.
+   *
+   * The two-step presigned flow above exists so a handset's photograph never
+   * travels through a serverless function. A rendered PDF is the opposite case:
+   * it is already in this process's memory, it is tens of kilobytes, and there
+   * is no client to hand a presigned URL to. So it goes straight to the bucket.
+   *
+   * Idempotent on the key. A concurrent request that rendered the same content
+   * gets the row the first one wrote rather than a unique-constraint failure —
+   * the bytes are identical by construction, so whichever PUT lands last is the
+   * same object either way.
+   */
+  async storeGenerated(input: {
+    key: string;
+    body: Uint8Array;
+    mimeType: string;
+    purpose: MediaPurpose;
+    uploadedById: string;
+    /** True for documents that must never be replaced once issued. */
+    immutable?: boolean;
+  }) {
+    const body = Buffer.from(input.body);
+    const sha256 = createHash("sha256").update(body).digest("hex");
+
+    await this.s3().send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: input.key,
+        Body: body,
+        ContentType: input.mimeType,
+      }),
+    );
+
+    try {
+      return await this.prisma.media.create({
+        data: {
+          key: input.key,
+          bucket: this.bucket,
+          mimeType: input.mimeType,
+          sizeBytes: body.byteLength,
+          sha256,
+          purpose: input.purpose,
+          uploadedById: input.uploadedById,
+          isImmutable: input.immutable ?? false,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const existing = await this.prisma.media.findUnique({ where: { key: input.key } });
+        if (existing) return existing;
+      }
+      throw error;
+    }
   }
 
   async requestUpload(dto: RequestUploadDto, user: AuthenticatedUser) {
@@ -147,9 +232,13 @@ export class MediaService {
   }
 
   /** A short-lived read URL. Nothing in the bucket is publicly readable. */
-  async signedUrl(id: string) {
+  async signedUrl(id: string, user: AuthenticatedUser) {
     const media = await this.prisma.media.findUnique({ where: { id } });
     if (!media) throw AppException.notFound("media");
+
+    // Before anything is signed. A URL that has been minted cannot be recalled,
+    // so the refusal has to happen ahead of it rather than around it.
+    await this.access.assertMayRead([media], user);
 
     const url = await getSignedUrl(
       this.s3(),
@@ -168,9 +257,17 @@ export class MediaService {
     };
   }
 
-  /** Signs a batch in one call — a KYC panel needs six at once, not six calls. */
-  async signedUrls(ids: string[]) {
+  /**
+   * Signs a batch in one call — a KYC panel needs six at once, not six calls.
+   *
+   * Every id in the batch is authorised individually, and one refusal fails the
+   * whole request. Anything laxer would make this route the way around the
+   * single-item check rather than a saving of five round trips.
+   */
+  async signedUrls(ids: string[], user: AuthenticatedUser) {
     const rows = await this.prisma.media.findMany({ where: { id: { in: ids } } });
+    await this.access.assertMayRead(rows, user);
+
     return Promise.all(
       rows.map(async (media) => ({
         id: media.id,
@@ -197,6 +294,34 @@ export class MediaService {
       this.prisma.media.count({ where }),
     ]);
     return { items, total };
+  }
+
+  /**
+   * Deletes objects from the bucket without asking who is asking.
+   *
+   * The only caller is the retention sweep, which has already decided that
+   * these files have outlived the period the authority published for them. It
+   * bypasses `remove` below deliberately: that method refuses anything marked
+   * immutable, which every evidence photograph is. Immutability means nobody
+   * edits or replaces the file, not that it is kept forever — expiry on a
+   * published schedule is the one thing entitled to end its life.
+   *
+   * Best-effort, and it must stay that way. A deployment with no storage
+   * configured, or a bucket having a bad afternoon, should not stop the
+   * database rows being purged: an orphaned object is rubbish to collect, while
+   * a row that survives its retention period is a broken promise.
+   */
+  async discardObjects(files: { key: string; bucket: string }[]): Promise<number> {
+    let deleted = 0;
+    for (const file of files) {
+      try {
+        await this.s3().send(new DeleteObjectCommand({ Bucket: file.bucket, Key: file.key }));
+        deleted++;
+      } catch (error) {
+        this.logger.warn(`Retention could not delete ${file.key} from storage: ${String(error)}`);
+      }
+    }
+    return deleted;
   }
 
   async remove(id: string, user: AuthenticatedUser, ctx: Ctx) {

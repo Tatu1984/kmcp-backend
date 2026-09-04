@@ -11,6 +11,8 @@ import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 import { AppException, type ErrorDetail } from "../errors/app.exception";
 import { ERROR_CODES, type ErrorCode } from "../errors/error-codes";
+import { reportException } from "@/observability/sentry";
+import type { AuthenticatedUser } from "../decorators/auth.decorators";
 
 interface ErrorBody {
   code: string;
@@ -39,6 +41,27 @@ export class AllExceptionsFilter implements ExceptionFilter {
         `${request.method} ${request.url} → ${status} ${body.code} [${requestId}]`,
         exception instanceof Error ? exception.stack : String(exception),
       );
+
+      /**
+       * Only 5xx is reported. A 403 or a 409 is this API answering correctly —
+       * the guard refused, or the vehicle already had a session — and routing
+       * those to an alerting tool trains everyone to ignore it. A 5xx is the
+       * only status that means we got something wrong.
+       *
+       * The same `requestId` that goes back to the caller and onto the audit
+       * rows is attached as a tag, so a citizen quoting the id from a failed
+       * receipt leads to this exact stack trace.
+       */
+      const principal = (request as Request & { user?: AuthenticatedUser }).user;
+      reportException(exception, {
+        requestId,
+        code: body.code,
+        status,
+        method: request.method,
+        url: request.originalUrl ?? request.url,
+        role: principal?.role,
+        userId: principal?.id,
+      });
     } else if (status >= HttpStatus.BAD_REQUEST) {
       this.logger.warn(`${request.method} ${request.url} → ${status} ${body.code} [${requestId}]`);
     }

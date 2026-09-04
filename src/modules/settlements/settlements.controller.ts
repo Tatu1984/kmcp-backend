@@ -5,6 +5,7 @@ import { zodPipe } from "@/common/pipes/zod-validation.pipe";
 import {
   ClientInfo,
   CurrentUser,
+  IdempotencyKey,
   RequestId,
   RequirePermissions,
   type AuthenticatedUser,
@@ -66,8 +67,9 @@ export class SettlementsController {
     @CurrentUser() user: AuthenticatedUser,
     @ClientInfo() info: { ip?: string },
     @RequestId() requestId: string,
+    @IdempotencyKey() idempotencyKey: string | undefined,
   ) {
-    return this.settlements.generate(dto, user, { ...info, requestId });
+    return this.settlements.generate(dto, user, { ...info, requestId, idempotencyKey });
   }
 
   @RequirePermissions("settlement.read")
@@ -124,8 +126,9 @@ export class SettlementsController {
     @CurrentUser() user: AuthenticatedUser,
     @ClientInfo() info: { ip?: string },
     @RequestId() requestId: string,
+    @IdempotencyKey() idempotencyKey: string | undefined,
   ) {
-    return this.settlements.payout(id, dto, user, { ...info, requestId });
+    return this.settlements.payout(id, dto, user, { ...info, requestId, idempotencyKey });
   }
 }
 

@@ -7,16 +7,19 @@ import {
   SlotStatus,
   SlotType,
   ZoneStatus,
+  PaymentStatus,
 } from "@prisma/client";
 
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
 import { AuditService } from "@/common/services/audit.service";
+import { IdempotencyService } from "@/common/services/idempotency.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import { withinZone, type GeoPolygon } from "@/common/utils/geo.util";
 import { generateSessionCode, isValidPlate, normalisePlate } from "@/common/utils/plate.util";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 import { QuoteService } from "@/modules/tariffs/quote.service";
 import type {
   CancelSessionDto,
@@ -25,7 +28,7 @@ import type {
   StartSessionDto,
 } from "./dto/session.dto";
 
-type Ctx = { ip?: string; requestId?: string };
+type Ctx = { ip?: string; requestId?: string; idempotencyKey?: string };
 
 const SORTABLE = ["startAt", "endAt", "payableAmount", "status", "plateNumber"] as const;
 
@@ -63,6 +66,22 @@ const SESSION_SELECT = {
   attendant: {
     select: { id: true, employeeCode: true, user: { select: { name: true } } },
   },
+  /**
+   * Just enough of the payment to answer "was this paid, and how".
+   *
+   * The full payment list is deliberately kept to the detail endpoint — a
+   * listing has no use for gateway references — but the *absence* of any
+   * payment state was worse than the weight of carrying it. The portal has a
+   * required `paid` boolean and nothing to populate it from, so it asserted
+   * `false`, and every completed session in the city rendered as unpaid with an
+   * "Unpaid" figure on the screen to match. One captured row, two columns,
+   * settles it.
+   */
+  payments: {
+    where: { status: PaymentStatus.CAPTURED },
+    select: { mode: true },
+    take: 1,
+  },
 } satisfies Prisma.ParkingSessionSelect;
 
 /**
@@ -81,12 +100,26 @@ export class SessionsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly quotes: QuoteService,
+    private readonly idempotency: IdempotencyService,
   ) {}
+
+  /**
+   * The idempotency scope for a route, namespaced by the caller.
+   *
+   * Keys are chosen by clients, and two handsets will eventually pick the same
+   * one. Without the user id in the scope, the second attendant's start would
+   * be answered with the first attendant's session — a stranger's plate,
+   * vehicle and location handed back as if it were theirs. The window is short
+   * but the failure is not subtle.
+   */
+  private scope(route: string, user: AuthenticatedUser): string {
+    return `session.${route}:${user.id}`;
+  }
 
   private scopeFilter(user: AuthenticatedUser): Prisma.ParkingSessionWhereInput {
     if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) return { vendorId: user.vendorId };
-    if (user.isZoneScoped && user.zoneIds.length > 0) return { zoneId: { in: user.zoneIds } };
-    return {};
+    const zones = zoneScopeOf(user);
+    return zones ? { zoneId: { in: zones } } : {};
   }
 
   private async config(key: string, fallback: number): Promise<number> {
@@ -134,8 +167,29 @@ export class SessionsService {
         select: SESSION_SELECT,
       });
       if (replay) return { ...replay, replayed: true };
+
+      // A device event id is stored on the session itself under a unique index,
+      // so it protects the start permanently and atomically. Nothing the
+      // idempotency store offers improves on that, and wrapping it would only
+      // keep a redundant copy of the session for a day.
+      return this.startOnce(dto, user, ctx);
     }
 
+    // The portal and the citizen app send no device event id. An
+    // `Idempotency-Key` header is how they get the same protection — best
+    // effort rather than a database constraint, but it is what turns a retried
+    // POST from a dropped connection into one session instead of two.
+    if (!ctx.idempotencyKey) return this.startOnce(dto, user, ctx);
+
+    const { value, replayed } = await this.idempotency.run(
+      this.scope("start", user),
+      ctx.idempotencyKey,
+      () => this.startOnce(dto, user, ctx),
+    );
+    return { ...value, replayed };
+  }
+
+  private async startOnce(dto: StartSessionDto, user: AuthenticatedUser, ctx: Ctx) {
     const plate = normalisePlate(dto.plateNumber);
     if (!isValidPlate(plate)) {
       throw new AppException("VALIDATION_FAILED", [
@@ -314,6 +368,22 @@ export class SessionsService {
    * whatever the tariff has since become.
    */
   async end(id: string, dto: EndSessionDto, user: AuthenticatedUser, ctx: Ctx) {
+    // `clientEventId` is the handset's own id for the end event. It was
+    // accepted by the schema and then ignored, which made the offline queue's
+    // promise — replay this as often as you like — true of starts and not of
+    // ends. Either id serves as the key; the header covers the portal.
+    const key = dto.clientEventId ?? ctx.idempotencyKey;
+    if (!key) return this.endOnce(id, dto, user, ctx);
+
+    const { value, replayed } = await this.idempotency.run(
+      this.scope("end", user),
+      key,
+      () => this.endOnce(id, dto, user, ctx),
+    );
+    return { ...value, replayed };
+  }
+
+  private async endOnce(id: string, dto: EndSessionDto, user: AuthenticatedUser, ctx: Ctx) {
     const session = await this.prisma.parkingSession.findFirst({
       where: { OR: [{ id }, { code: id }] },
       select: {
@@ -463,8 +533,10 @@ export class SessionsService {
     const overstayAfterMinutes = await this.config("ops.overstayAfterMinutes", 360);
     const overstayBefore = new Date(Date.now() - overstayAfterMinutes * 60_000);
 
-    const where: Prisma.ParkingSessionWhereInput = {
-      ...this.scopeFilter(user),
+    // The caller's filters go in their own object: a `?zoneId=` that landed in
+    // the same literal as the scope used to overwrite it outright, and hand a
+    // zone officer another ward's live sessions, registration numbers included.
+    const where = scoped<Prisma.ParkingSessionWhereInput>(this.scopeFilter(user), {
       ...(query.status ? { status: query.status } : {}),
       ...(query.zoneId ? { zoneId: query.zoneId } : {}),
       ...(query.vendorId ? { vendorId: query.vendorId } : {}),
@@ -490,7 +562,7 @@ export class SessionsService {
             ],
           }
         : {}),
-    };
+    });
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.parkingSession.findMany({
@@ -518,7 +590,9 @@ export class SessionsService {
 
   async findOne(id: string, user: AuthenticatedUser) {
     const session = await this.prisma.parkingSession.findFirst({
-      where: { OR: [{ id }, { code: id }], ...this.scopeFilter(user) },
+      where: scoped<Prisma.ParkingSessionWhereInput>(this.scopeFilter(user), {
+        OR: [{ id }, { code: id }],
+      }),
       select: {
         ...SESSION_SELECT,
         payments: {
@@ -558,7 +632,10 @@ export class SessionsService {
         select: SESSION_SELECT,
       }),
       this.prisma.parkingSession.findMany({
-        where: { plateNumber: plate, status: SessionStatus.COMPLETED, ...this.scopeFilter(user) },
+        where: scoped<Prisma.ParkingSessionWhereInput>(this.scopeFilter(user), {
+          plateNumber: plate,
+          status: SessionStatus.COMPLETED,
+        }),
         select: {
           id: true,
           code: true,
@@ -601,10 +678,9 @@ export class SessionsService {
   async live(user: AuthenticatedUser) {
     const overstayAfterMinutes = await this.config("ops.overstayAfterMinutes", 360);
     const overstayBefore = new Date(Date.now() - overstayAfterMinutes * 60_000);
-    const where: Prisma.ParkingSessionWhereInput = {
-      ...this.scopeFilter(user),
+    const where = scoped<Prisma.ParkingSessionWhereInput>(this.scopeFilter(user), {
       status: { in: [SessionStatus.ACTIVE, SessionStatus.OVERSTAY] },
-    };
+    });
 
     const [total, overstaying, byZone] = await Promise.all([
       this.prisma.parkingSession.count({ where }),

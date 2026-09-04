@@ -146,7 +146,11 @@ export class ActivityController {
     @CurrentUser() user: AuthenticatedUser,
     @Body(zodPipe(ConsentSchema)) dto: ConsentDto,
     @Req() req: Request,
+    @ClientInfo() info: { ip?: string },
+    @RequestId() requestId: string,
   ) {
-    return this.activity.setConsent(user, dto, req.header("user-agent"));
+    // The IP and the correlation id go with it: a consent record that cannot
+    // be tied back to the request that carried it is a claim, not evidence.
+    return this.activity.setConsent(user, dto, req.header("user-agent"), { ...info, requestId });
   }
 }

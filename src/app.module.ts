@@ -31,11 +31,16 @@ import { SessionsModule } from "./modules/sessions/sessions.module";
 import { PaymentsModule } from "./modules/payments/payments.module";
 import { ShiftsModule } from "./modules/shifts/shifts.module";
 import { IncidentsModule } from "./modules/incidents/incidents.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
+import { MessagingModule } from "./modules/messaging/messaging.module";
 import { PassesModule } from "./modules/passes/passes.module";
 import { CitizensModule } from "./modules/citizens/citizens.module";
 import { SettlementsModule } from "./modules/settlements/settlements.module";
 import { AnalyticsModule } from "./modules/analytics/analytics.module";
 import { ReportsModule } from "./modules/reports/reports.module";
+import { DocumentsModule } from "./modules/documents/documents.module";
+import { PrivacyModule } from "./modules/privacy/privacy.module";
+import { CronModule } from "./modules/cron/cron.module";
 
 @Module({
   imports: [
@@ -76,11 +81,16 @@ import { ReportsModule } from "./modules/reports/reports.module";
     PaymentsModule,
     ShiftsModule,
     IncidentsModule,
+    NotificationsModule,
+    MessagingModule,
     PassesModule,
     CitizensModule,
     SettlementsModule,
     AnalyticsModule,
     ReportsModule,
+    DocumentsModule,
+    PrivacyModule,
+    CronModule,
   ],
   controllers: [HealthController],
   providers: [

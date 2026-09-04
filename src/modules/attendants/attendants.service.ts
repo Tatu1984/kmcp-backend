@@ -9,6 +9,7 @@ import { AuditService } from "@/common/services/audit.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 import type {
   AttendantQueryDto,
   AttendantStatusDto,
@@ -45,9 +46,27 @@ export class AttendantsService {
     private readonly audit: AuditService,
   ) {}
 
-  /** A vendor only ever sees their own staff. */
+  /**
+   * A vendor only ever sees their own staff; a zone officer only sees the staff
+   * posted to a ward they hold.
+   *
+   * The zone half was missing, and the omission was easy to overlook because
+   * attendants are filed under an operator rather than a kerb. The effect was
+   * that an officer allocated no wards — who correctly saw no zones, no
+   * sessions and no bays — could still list every attendant in the city by
+   * name and mobile number, because `vendor.read` was the only gate and this
+   * filter had nothing to say about zones.
+   *
+   * An attendant with no default zone is not visible to a scoped officer.
+   * `{ in: [] }` on an empty allocation already matches nothing; excluding the
+   * unposted ones as well keeps "shown" meaning "in a ward you hold".
+   */
   private scopeFilter(user: AuthenticatedUser): Prisma.AttendantWhereInput {
-    return user.role === SYSTEM_ROLES.VENDOR && user.vendorId ? { vendorId: user.vendorId } : {};
+    if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) {
+      return { vendorId: user.vendorId };
+    }
+    const zoneIds = zoneScopeOf(user);
+    return zoneIds === null ? {} : { defaultZoneId: { in: zoneIds } };
   }
 
   private assertOwnership(vendorId: string, user: AuthenticatedUser) {
@@ -57,8 +76,10 @@ export class AttendantsService {
   }
 
   async list(query: AttendantQueryDto, user: AuthenticatedUser) {
-    const where: Prisma.AttendantWhereInput = {
-      ...this.scopeFilter(user),
+    // `?vendorId=` collides with the scope's own key, so a vendor asking for
+    // somebody else's id used to replace their scope rather than narrow it and
+    // list another operator's staff, names and mobile numbers included.
+    const where = scoped<Prisma.AttendantWhereInput>(this.scopeFilter(user), {
       ...(query.vendorId ? { vendorId: query.vendorId } : {}),
       ...(query.zoneId ? { defaultZoneId: query.zoneId } : {}),
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
@@ -72,7 +93,7 @@ export class AttendantsService {
             ],
           }
         : {}),
-    };
+    });
 
     const [rows, total] = await this.prisma.$transaction([
       this.prisma.attendant.findMany({

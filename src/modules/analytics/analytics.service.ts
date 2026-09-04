@@ -16,6 +16,7 @@ import {
 import { PrismaService } from "@/prisma/prisma.service";
 import { SYSTEM_ROLES } from "@/common/rbac/permissions";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
+import { scoped, zoneScopeOf } from "@/common/rbac/scope";
 
 const CAPTURED: PaymentStatus[] = [PaymentStatus.CAPTURED, PaymentStatus.PARTIALLY_REFUNDED];
 const LIVE: SessionStatus[] = [SessionStatus.ACTIVE, SessionStatus.OVERSTAY];
@@ -44,13 +45,74 @@ export class AnalyticsService {
 
   private sessionScope(user: AuthenticatedUser): Prisma.ParkingSessionWhereInput {
     if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) return { vendorId: user.vendorId };
-    if (user.isZoneScoped && user.zoneIds.length > 0) return { zoneId: { in: user.zoneIds } };
-    return {};
+    const zones = zoneScopeOf(user);
+    return zones ? { zoneId: { in: zones } } : {};
+  }
+
+  /** The same scope against the zone table, for the counts that start there. */
+  private zoneScope(user: AuthenticatedUser): Prisma.ZoneWhereInput {
+    const zones = zoneScopeOf(user);
+    return zones ? { id: { in: zones } } : {};
   }
 
   private paymentScope(user: AuthenticatedUser): Prisma.PaymentWhereInput {
     const scope = this.sessionScope(user);
     return Object.keys(scope).length ? { session: scope } : {};
+  }
+
+  /**
+   * Incidents, scoped exactly the way `IncidentsService` scopes them.
+   *
+   * Matching the shape matters as much as being safe here, because the tile is
+   * a link: an officer who reads "9 open incidents" and lands on a list of four
+   * has been told the dashboard is broken. An incident is attached either to a
+   * zone directly or to the session it was raised against, so both routes have
+   * to be checked — filtering on `zoneId` alone would drop every incident a
+   * citizen raised against a session in the officer's own ward.
+   */
+  private async incidentScope(user: AuthenticatedUser): Promise<Prisma.IncidentWhereInput> {
+    if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) {
+      const zones = await this.prisma.vendorZone.findMany({
+        where: { vendorId: user.vendorId },
+        select: { zoneId: true },
+      });
+      const zoneIds = zones.map((z) => z.zoneId);
+      return {
+        OR: [
+          { session: { vendorId: user.vendorId } },
+          ...(zoneIds.length ? [{ zoneId: { in: zoneIds } }] : []),
+        ],
+      };
+    }
+    const zones = zoneScopeOf(user);
+    if (zones) {
+      return { OR: [{ zoneId: { in: zones } }, { session: { zoneId: { in: zones } } }] };
+    }
+    return {};
+  }
+
+  /**
+   * Shifts, scoped the way `ShiftsService` scopes them.
+   *
+   * A shift is where the cash is, so the variance and awaiting-verification
+   * counts are the numbers an officer chases people about. Unscoped they were
+   * the whole city's, which turns a ward officer's morning into a hunt for four
+   * unexplained deposits that are not theirs to explain.
+   */
+  private shiftScope(user: AuthenticatedUser): Prisma.ShiftWhereInput {
+    if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) return { vendorId: user.vendorId };
+    if (user.role === SYSTEM_ROLES.ATTENDANT && user.attendantId) {
+      return { attendantId: user.attendantId };
+    }
+    const zones = zoneScopeOf(user);
+    return zones ? { zoneId: { in: zones } } : {};
+  }
+
+  /** Attendants, scoped the way `AttendantsService` scopes them — by posting. */
+  private attendantScope(user: AuthenticatedUser): Prisma.AttendantWhereInput {
+    if (user.role === SYSTEM_ROLES.VENDOR && user.vendorId) return { vendorId: user.vendorId };
+    const zones = zoneScopeOf(user);
+    return zones === null ? {} : { defaultZoneId: { in: zones } };
   }
 
   async overview(user: AuthenticatedUser) {
@@ -61,6 +123,23 @@ export class AnalyticsService {
 
     const sessionScope = this.sessionScope(user);
     const paymentScope = this.paymentScope(user);
+    // Awaited rather than folded into the batch below: a vendor's incident
+    // scope has to look up the zones they hold before it can be expressed.
+    const incidentScope = await this.incidentScope(user);
+    const shiftScope = this.shiftScope(user);
+
+    // Two kinds of figure come back from here and the difference is deliberate.
+    //
+    // Everything drawn from zones, sessions, payments, incidents, shifts and
+    // attendants is narrowed to what this caller may see, because every one of
+    // those rows belongs to a ward and the screens they link through to are
+    // narrowed the same way.
+    //
+    // The rest — vendors, citizens, passes, settlements and the payout total —
+    // is authority-wide on purpose. None of those rows carries a zone, and the
+    // portal now labels them as authority-wide on the officer's dashboard. Each
+    // is marked below, because the label and the query have to be changed
+    // together or the dashboard starts lying about which of the two it is.
 
     const collected = async (from: Date, to?: Date) => {
       const result = await this.prisma.payment.aggregate({
@@ -93,7 +172,7 @@ export class AnalyticsService {
       activePasses,
     ] = await Promise.all([
       this.prisma.zone.findMany({
-        where: user.isZoneScoped && user.zoneIds.length ? { id: { in: user.zoneIds } } : {},
+        where: this.zoneScope(user),
         select: { id: true, capacity: true, status: true },
       }),
       this.prisma.parkingSession.count({ where: { ...sessionScope, status: { in: LIVE } } }),
@@ -110,19 +189,37 @@ export class AnalyticsService {
         _sum: { amount: true, refundedAmount: true },
       }),
       this.prisma.incident.count({
-        where: { status: { in: [IncidentStatus.OPEN, IncidentStatus.IN_PROGRESS] } },
+        where: scoped<Prisma.IncidentWhereInput>(incidentScope, {
+          status: { in: [IncidentStatus.OPEN, IncidentStatus.IN_PROGRESS] },
+        }),
       }),
-      this.prisma.shift.groupBy({ by: ["status"], _count: { _all: true } }),
+      this.prisma.shift.groupBy({ by: ["status"], where: shiftScope, _count: { _all: true } }),
+      // Authority-wide. A Settlement carries no zone: one row is a vendor's
+      // whole period across every kerb they hold, so there is no ward-sized
+      // count to give an officer, and a quarter of a settlement is not a
+      // number that reconciles against anything. It is a scalar with no names
+      // in it, and the officer cannot act on it in any case —
+      // `settlement.approve` is not theirs. Narrowing it to the vendor who owns
+      // it belongs in SettlementsService, which already does exactly that.
       this.prisma.settlement.count({ where: { status: SettlementStatus.PENDING_APPROVAL } }),
+      // Authority-wide: a vendor is an organisation the authority contracts
+      // with, not something that lives in a ward.
       this.prisma.vendor.groupBy({ by: ["status"], _count: { _all: true } }),
-      this.prisma.attendant.count({ where: { isActive: true } }),
+      this.prisma.attendant.count({
+        where: scoped<Prisma.AttendantWhereInput>(this.attendantScope(user), { isActive: true }),
+      }),
+      // Authority-wide: a citizen registers with the city, not with a kerb.
       this.prisma.user.count({
         where: { role: SYSTEM_ROLES.CITIZEN, status: UserStatus.ACTIVE, deletedAt: null },
       }),
+      // Authority-wide, for the same reason as the settlement count above —
+      // this is the payout side of the very same rows.
       this.prisma.settlement.aggregate({
         where: { status: SettlementStatus.APPROVED },
         _sum: { vendorShare: true },
       }),
+      // Authority-wide: a pass is bought against the city and is honoured
+      // wherever it is valid, so it belongs to no single zone.
       this.prisma.pass.count({ where: { status: PassStatus.ACTIVE, validTo: { gte: now } } }),
     ]);
 
@@ -158,6 +255,8 @@ export class AnalyticsService {
       digitalCollection: digital,
       upiCollection: upi,
 
+      // Authority-wide — see the queries above. The portal labels this one and
+      // the four below as authority-wide on a zone officer's dashboard.
       pendingVendorPayments: awaitingPayout._sum.vendorShare ?? 0,
 
       sessionsToday,
@@ -166,14 +265,14 @@ export class AnalyticsService {
       openShifts: shiftCount(ShiftStatus.OPEN),
       varianceShifts: shiftCount(ShiftStatus.VARIANCE_FLAGGED),
       awaitingVerification: shiftCount(ShiftStatus.CLOSED),
-      pendingSettlements,
-      pendingVendorApprovals: vendors.find((v) => v.status === VendorStatus.PENDING)?._count._all ?? 0,
+      pendingSettlements, // authority-wide
+      pendingVendorApprovals: vendors.find((v) => v.status === VendorStatus.PENDING)?._count._all ?? 0, // authority-wide
 
-      activeVendors: vendors.find((v) => v.status === VendorStatus.APPROVED)?._count._all ?? 0,
+      activeVendors: vendors.find((v) => v.status === VendorStatus.APPROVED)?._count._all ?? 0, // authority-wide
       attendantsOnShift: shiftCount(ShiftStatus.OPEN),
       totalAttendants: attendants,
-      registeredCitizens: citizens,
-      activePasses,
+      registeredCitizens: citizens, // authority-wide
+      activePasses, // authority-wide
       zonesOpen: zones.filter((z) => z.status === ZoneStatus.OPEN).length,
       zonesTotal: zones.length,
     };
@@ -282,6 +381,12 @@ export class AnalyticsService {
    */
   async feed(user: AuthenticatedUser, limit = 40) {
     const sessionScope = this.sessionScope(user);
+    // The session and payment halves of the feed were scoped from the start and
+    // the incident and shift halves were not, which is the worst of both: the
+    // feed looked local, so another ward's incident arriving in it read as
+    // something happening on the officer's own kerb.
+    const incidentScope = await this.incidentScope(user);
+    const shiftScope = this.shiftScope(user);
 
     const [starts, ends, payments, incidents, shifts] = await Promise.all([
       this.prisma.parkingSession.findMany({
@@ -322,11 +427,13 @@ export class AnalyticsService {
         take: limit,
       }),
       this.prisma.incident.findMany({
+        where: incidentScope,
         select: { id: true, type: true, createdAt: true, zoneId: true, description: true },
         orderBy: { createdAt: "desc" },
         take: limit,
       }),
       this.prisma.shift.findMany({
+        where: shiftScope,
         select: {
           id: true,
           startAt: true,
@@ -408,7 +515,7 @@ export class AnalyticsService {
     const today = startOfDay(new Date());
 
     const zones = await this.prisma.zone.findMany({
-      where: user.isZoneScoped && user.zoneIds.length ? { id: { in: user.zoneIds } } : {},
+      where: this.zoneScope(user),
       select: {
         id: true,
         code: true,

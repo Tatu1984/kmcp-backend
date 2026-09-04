@@ -63,19 +63,33 @@ export class MediaController {
     return this.media.confirmUpload(dto, user, { ...info, requestId });
   }
 
+  // No @RequirePermissions here, because no single grant describes who may read
+  // a file: it depends on whose file it is. The check is per media id, inside
+  // MediaAccessService, and it needs the caller — which is why both of these
+  // take @CurrentUser rather than an id alone.
   @Get(":id/url")
-  @ApiOperation({ summary: "A short-lived read URL for one file" })
-  signedUrl(@Param("id") id: string) {
-    return this.media.signedUrl(id);
+  @ApiOperation({
+    summary: "A short-lived read URL for one file",
+    description:
+      "Issued only to the people the file is about — the citizen whose vehicle it is, the vendor " +
+      "whose document it is, the attendant who recorded it — and to staff whose role covers it.",
+  })
+  signedUrl(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.media.signedUrl(id, user);
   }
 
   @Post("urls")
   @ApiOperation({
     summary: "Read URLs for several files at once",
-    description: "A document panel needs six at a time; this saves six round trips.",
+    description:
+      "A document panel needs six at a time; this saves six round trips. Every id is authorised " +
+      "the same way as the single-item route, and one refusal fails the whole batch.",
   })
-  signedUrls(@Body(zodPipe(SignBatchSchema)) dto: SignBatchDto) {
-    return this.media.signedUrls(dto.ids);
+  signedUrls(
+    @Body(zodPipe(SignBatchSchema)) dto: SignBatchDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.media.signedUrls(dto.ids, user);
   }
 
   @RequirePermissions("audit.read")

@@ -5,6 +5,7 @@ import { zodPipe } from "@/common/pipes/zod-validation.pipe";
 import {
   ClientInfo,
   CurrentUser,
+  IdempotencyKey,
   RequestId,
   RequirePermissions,
   type AuthenticatedUser,
@@ -28,6 +29,9 @@ import {
  * the same session and the same fare back. The vendor app queues events while
  * it is offline and flushes them later, sometimes more than once, and a
  * duplicate must never become a second charge.
+ *
+ * Callers with no device event id — the portal, the citizen app — get the same
+ * protection from an `Idempotency-Key` header.
  */
 @ApiTags("Sessions")
 @ApiBearerAuth("bearer")
@@ -86,8 +90,9 @@ export class SessionsController {
     @CurrentUser() user: AuthenticatedUser,
     @ClientInfo() info: { ip?: string },
     @RequestId() requestId: string,
+    @IdempotencyKey() idempotencyKey: string | undefined,
   ) {
-    return this.sessions.start(dto, user, { ...info, requestId });
+    return this.sessions.start(dto, user, { ...info, requestId, idempotencyKey });
   }
 
   @RequirePermissions("session.read")
@@ -104,8 +109,9 @@ export class SessionsController {
     @CurrentUser() user: AuthenticatedUser,
     @ClientInfo() info: { ip?: string },
     @RequestId() requestId: string,
+    @IdempotencyKey() idempotencyKey: string | undefined,
   ) {
-    return this.sessions.end(id, dto, user, { ...info, requestId });
+    return this.sessions.end(id, dto, user, { ...info, requestId, idempotencyKey });
   }
 
   @RequirePermissions("session.cancel")
