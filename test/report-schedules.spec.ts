@@ -822,11 +822,23 @@ describe("whose schedules a caller may see and manage", () => {
   });
 
   it("recomputes the next run when the hour is edited", async () => {
-    const { service, schedules } = makeService([schedule({ hour: 6 })]);
-    // Leaving yesterday's instant in place would run the schedule at the old
-    // hour once more before the change took effect.
-    await service.update(schedules[0].id, { hour: 22 } as any, OFFICER, CTX);
-    expect(schedules[0].nextRunAt.toISOString()).toBe("2026-09-04T16:30:00.000Z");
+    /**
+     * The clock is pinned, because the assertion is about a wall-clock hour.
+     * Left on the real clock this passed all morning and failed after 22:00
+     * Kolkata — at which point 22:00 today is in the past and the correct next
+     * run is tomorrow. The test was reporting the time of day, not the code.
+     */
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    try {
+      const { service, schedules } = makeService([schedule({ hour: 6 })]);
+      // Leaving yesterday's instant in place would run the schedule at the old
+      // hour once more before the change took effect.
+      await service.update(schedules[0].id, { hour: 22 } as any, OFFICER, CTX);
+      expect(schedules[0].nextRunAt.toISOString()).toBe("2026-09-04T16:30:00.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

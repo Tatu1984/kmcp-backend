@@ -5,7 +5,7 @@
   "description": "KMCP — Smart Street Parking Management System. REST API consumed by the Admin Portal, the Vendor app and the Citizen app.",
   "license": "UNLICENSED",
   "scripts": {
-    "build": "prisma generate && nest build",
+    "build": "prisma generate && prisma migrate deploy && nest build",
     "start": "nest start",
     "dev": "nest start --watch",
     "start:prod": "node dist/main",

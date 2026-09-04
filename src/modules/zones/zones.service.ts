@@ -39,7 +39,33 @@ const ZONE_SELECT = {
   updatedAt: true,
   ward: { select: { id: true, code: true, name: true } },
   street: { select: { id: true, name: true } },
+  /**
+   * The operator currently holding the kerb.
+   *
+   * Its absence was a silent one-way street: `POST /zones/:id/vendor` and
+   * `POST /vendors/:id/zones` both wrote the assignment correctly, and no read
+   * ever returned it — so the portal showed every zone as unassigned however
+   * many times an officer assigned one. The write looked like it had failed
+   * when it had not.
+   *
+   * `endedAt: null` because `VendorZone` is a history: a zone that changed
+   * hands keeps the closed row, and only the open one is the answer to "who
+   * operates this today".
+   */
+  vendorZones: {
+    where: { endedAt: null },
+    select: { vendor: { select: { id: true, orgName: true } } },
+    take: 1,
+  },
 } satisfies Prisma.ZoneSelect;
+
+/** Flattens the assignment row into the `vendor` the clients read. */
+function withVendor<T extends { vendorZones?: { vendor: { id: string; orgName: string } }[] }>(
+  zone: T,
+): Omit<T, "vendorZones"> & { vendor: { id: string; orgName: string } | null } {
+  const { vendorZones, ...rest } = zone;
+  return { ...rest, vendor: vendorZones?.[0]?.vendor ?? null };
+}
 
 @Injectable()
 export class ZonesService {
@@ -71,8 +97,14 @@ export class ZonesService {
     return zones.map((zone) => {
       const occupied = byZone.get(zone.id) ?? 0;
       const available = Math.max(0, zone.capacity - occupied);
+      // Destructured rather than passed through `withVendor` so the caller's
+      // own row type survives the spread.
+      const { vendorZones, ...rest } = zone as T & {
+        vendorZones?: { vendor: { id: string; orgName: string } }[];
+      };
       return {
-        ...zone,
+        ...rest,
+        vendor: vendorZones?.[0]?.vendor ?? null,
         occupied,
         available,
         occupancyPct: zone.capacity > 0 ? Math.round((occupied / zone.capacity) * 100) : 0,
@@ -155,10 +187,12 @@ export class ZonesService {
         select: ZONE_SELECT,
       });
 
-      if (dto.vendorId) {
-        await tx.vendorZone.create({ data: { vendorId: dto.vendorId, zoneId: created.id } });
-      }
-      return created;
+      if (!dto.vendorId) return created;
+
+      // Re-read once the assignment exists. Returning `created` here reported
+      // the zone as unassigned in the same response that assigned it.
+      await tx.vendorZone.create({ data: { vendorId: dto.vendorId, zoneId: created.id } });
+      return tx.zone.findUniqueOrThrow({ where: { id: created.id }, select: ZONE_SELECT });
     });
 
     await this.audit.record({
@@ -170,7 +204,7 @@ export class ZonesService {
       ...ctx,
     });
 
-    return zone;
+    return withVendor(zone);
   }
 
   async update(
@@ -183,16 +217,23 @@ export class ZonesService {
     if (!before) throw AppException.notFound("zone");
 
     const { vendorId, boundary, ...rest } = dto;
-    const after = await this.prisma.zone.update({
+    await this.prisma.zone.update({
       where: { id },
       data: {
         ...rest,
         ...(boundary !== undefined ? { boundary: boundary as never } : {}),
       },
-      select: ZONE_SELECT,
+      select: { id: true },
     });
 
+    // Assign before re-reading, or the response reports the operator the zone
+    // had a moment ago rather than the one it now has.
     if (vendorId) await this.assignVendor(id, vendorId, user, ctx);
+
+    const after = await this.prisma.zone.findUniqueOrThrow({
+      where: { id },
+      select: ZONE_SELECT,
+    });
 
     await this.audit.record({
       actor: user,
@@ -204,7 +245,7 @@ export class ZonesService {
       ...ctx,
     });
 
-    return after;
+    return withVendor(after);
   }
 
   async changeStatus(
