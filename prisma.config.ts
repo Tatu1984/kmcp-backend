@@ -7,6 +7,13 @@ import { defineConfig } from "prisma/config";
  * Note: when a Prisma config file is present, Prisma does not auto-load .env
  * files. Load them yourself before running CLI commands:
  *   set -a && . ./.env && set +a && npm run db:migrate
+ *
+ * Migrations are applied deliberately with `npm run db:deploy`, never from the
+ * Vercel build. `migrate deploy` takes a Postgres advisory lock, and a build
+ * runner cannot reliably hold one: against the pooled host the lock is held on
+ * a backend the pooler may hand to someone else, and two concurrent builds
+ * contend for it either way. Both failure modes surface as P1002 and fail a
+ * deployment over a migration set that was already applied.
  */
 export default defineConfig({
   schema: path.join("prisma", "schema.prisma"),
