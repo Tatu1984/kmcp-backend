@@ -19,8 +19,8 @@ export const CreateZoneSchema = z.object({
     .trim()
     .min(2)
     .max(16)
-    .regex(/^[A-Z0-9-]+$/, "Use uppercase letters, digits and hyphens only")
-    .transform((c) => c.toUpperCase()),
+    .toUpperCase()
+    .regex(/^[A-Z0-9-]+$/, "Use letters, digits and hyphens only"),
   name: z.string().trim().min(2).max(120),
   wardId: z.string().optional(),
   streetId: z.string().optional(),

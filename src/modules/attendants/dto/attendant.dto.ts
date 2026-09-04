@@ -13,8 +13,8 @@ export const CreateAttendantSchema = z.object({
     .trim()
     .min(2)
     .max(24)
-    .regex(/^[A-Z0-9-]+$/, "Use uppercase letters, digits and hyphens only")
-    .transform((c) => c.toUpperCase()),
+    .toUpperCase()
+    .regex(/^[A-Z0-9-]+$/, "Use letters, digits and hyphens only"),
   defaultZoneId: z.string().optional(),
   /** Optional at creation — the attendant can be issued one when the device is handed over. */
   password: z.string().min(8).max(128).optional(),

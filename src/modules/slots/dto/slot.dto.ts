@@ -11,8 +11,8 @@ export const CreateSlotSchema = z.object({
     .trim()
     .min(1)
     .max(16)
-    .regex(CODE, "Use uppercase letters, digits and hyphens only")
-    .transform((c) => c.toUpperCase()),
+    .toUpperCase()
+    .regex(CODE, "Use letters, digits and hyphens only"),
   type: z.nativeEnum(SlotType),
   isReserved: z.boolean().default(false),
 });
@@ -30,8 +30,8 @@ export const BulkCreateSlotsSchema = z
       .trim()
       .min(1)
       .max(8)
-      .regex(CODE, "Use uppercase letters, digits and hyphens only")
-      .transform((p) => p.toUpperCase()),
+      .toUpperCase()
+      .regex(CODE, "Use letters, digits and hyphens only"),
     from: z.number().int().min(1).max(9999),
     to: z.number().int().min(1).max(9999),
     type: z.nativeEnum(SlotType),
