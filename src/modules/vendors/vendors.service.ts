@@ -230,8 +230,32 @@ export class VendorsService {
   }
 
   /**
-   * Approval is gated on verified KYC. A payout to an unverified account fails
-   * at the bank anyway — better to refuse here, where the reason is legible.
+   * Whether an officer may approve a vendor whose documents are not yet in the
+   * platform. Defaults to refusing, which is the safe reading.
+   *
+   * It has to be a decision the authority can make, because otherwise the very
+   * first vendor can never be onboarded: approval needs verified documents,
+   * documents need an upload, and an upload needs object storage that a fresh
+   * deployment does not yet have. A municipal body also verifies papers in a
+   * folder long before they are scanned, and refusing to record a decision that
+   * has genuinely been taken does not make the platform safer — it makes it
+   * bypassed.
+   *
+   * When it is turned off, the approval still goes through the audit trail with
+   * the missing documents named, so the fact that it was granted on paper is
+   * itself a matter of record.
+   */
+  private async requireKycForApproval(): Promise<boolean> {
+    const row = await this.prisma.systemConfig.findUnique({
+      where: { key: "vendor.requireKycForApproval" },
+    });
+    return row?.value !== false;
+  }
+
+  /**
+   * Approval is gated on verified KYC unless the authority has said otherwise.
+   * A payout to an unverified account fails at the bank anyway — better to
+   * refuse here, where the reason is legible.
    */
   async changeStatus(
     id: string,
@@ -247,11 +271,17 @@ export class VendorsService {
 
     const { kycComplete, missingDocuments } = this.kycState(vendor.documents);
 
-    if (dto.status === VendorStatus.APPROVED && !kycComplete) {
+    const kycRequired = await this.requireKycForApproval();
+    const approvedWithoutKyc =
+      dto.status === VendorStatus.APPROVED && !kycComplete && !kycRequired;
+
+    if (dto.status === VendorStatus.APPROVED && !kycComplete && kycRequired) {
       throw new AppException(
         "KYC_INCOMPLETE",
         missingDocuments.map((d) => ({ field: d, issue: "not verified" })),
-        `Verify the vendor's ${missingDocuments.join(", ")} before approving them.`,
+        `Verify the vendor's ${missingDocuments.join(", ")} before approving them. ` +
+          "An authority that verifies documents outside the platform can turn " +
+          "off vendor.requireKycForApproval in system configuration.",
       );
     }
 
@@ -300,7 +330,16 @@ export class VendorsService {
       entity: "Vendor",
       entityId: id,
       before: { status: vendor.status },
-      after: { status: dto.status, reason: dto.reason },
+      after: {
+        status: dto.status,
+        reason: dto.reason,
+        // Recorded on the row itself, so an approval granted against documents
+        // held outside the platform is legible in the trail rather than
+        // indistinguishable from one granted against verified uploads.
+        ...(approvedWithoutKyc
+          ? { kycVerifiedOutsideThePlatform: true, documentsNotOnFile: missingDocuments }
+          : {}),
+      },
       ...ctx,
     });
 

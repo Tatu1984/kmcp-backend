@@ -82,5 +82,10 @@
   {
     "key": "retention.maxRowsPerClass",
     "value": 500
+  },
+  {
+    "key": "vendor.requireKycForApproval",
+    "value": true,
+    "description": "Refuse to approve a vendor until every required KYC document is verified in the platform. Turn off only where the authority verifies documents outside it; approvals granted that way are recorded as such in the audit trail."
   }
 ]

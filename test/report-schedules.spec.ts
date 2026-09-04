@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentMode, PaymentStatus, ReportFrequency, UserStatus } from "@prisma/client";
 
 import { ReportsService } from "../src/modules/reports/reports.service";
@@ -165,6 +165,26 @@ function writableTable(rows: Row[], prefix: string) {
 
 /** Friday 4 September 2026, 06:30 in Kolkata. 01:00 UTC. */
 const NOW = new Date("2026-09-04T01:00:00.000Z");
+
+/**
+ * Every assertion in this file is about a wall-clock instant — the next run of
+ * a daily schedule, whether a period covers a fixture payment — so the clock is
+ * pinned rather than borrowed from whoever runs the suite. Left on the real
+ * clock two tests passed all afternoon and failed the same evening: one when
+ * 22:00 Kolkata went past, the other when the date rolled over and the fixture
+ * fell out of the reporting window. Both were reporting the time of day.
+ *
+ * Only `Date` is faked. Faking the timer functions as well would leave the
+ * awaits in these tests waiting on a clock nothing advances.
+ */
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const WITHIN = new Date("2026-08-15T10:00:00.000Z");
 
@@ -822,23 +842,11 @@ describe("whose schedules a caller may see and manage", () => {
   });
 
   it("recomputes the next run when the hour is edited", async () => {
-    /**
-     * The clock is pinned, because the assertion is about a wall-clock hour.
-     * Left on the real clock this passed all morning and failed after 22:00
-     * Kolkata — at which point 22:00 today is in the past and the correct next
-     * run is tomorrow. The test was reporting the time of day, not the code.
-     */
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    try {
-      const { service, schedules } = makeService([schedule({ hour: 6 })]);
-      // Leaving yesterday's instant in place would run the schedule at the old
-      // hour once more before the change took effect.
-      await service.update(schedules[0].id, { hour: 22 } as any, OFFICER, CTX);
-      expect(schedules[0].nextRunAt.toISOString()).toBe("2026-09-04T16:30:00.000Z");
-    } finally {
-      vi.useRealTimers();
-    }
+    const { service, schedules } = makeService([schedule({ hour: 6 })]);
+    // Leaving yesterday's instant in place would run the schedule at the old
+    // hour once more before the change took effect.
+    await service.update(schedules[0].id, { hour: 22 } as any, OFFICER, CTX);
+    expect(schedules[0].nextRunAt.toISOString()).toBe("2026-09-04T16:30:00.000Z");
   });
 });
 
