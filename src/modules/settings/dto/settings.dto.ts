@@ -18,6 +18,8 @@ export const CONFIG_NAMESPACES = [
   // the retention decision the authority's, not the vendor's — see
   // `modules/privacy/retention.policy.ts`.
   "retention",
+  // Operator onboarding — see `vendor.requireKycForApproval`.
+  "vendor",
 ] as const;
 
 export const ConfigKeySchema = z
