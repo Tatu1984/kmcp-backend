@@ -24,6 +24,7 @@ import { GeographyModule } from "./modules/geography/geography.module";
 import { VehicleTypesModule } from "./modules/vehicle-types/vehicle-types.module";
 import { SlotsModule } from "./modules/slots/slots.module";
 import { AttendantsModule } from "./modules/attendants/attendants.module";
+import { AttendantPaymentsModule } from "./modules/attendant-payments/attendant-payments.module";
 import { UsersModule } from "./modules/users/users.module";
 import { SettingsModule } from "./modules/settings/settings.module";
 import { MediaModule } from "./modules/media/media.module";
@@ -74,6 +75,7 @@ import { CronModule } from "./modules/cron/cron.module";
     VehicleTypesModule,
     SlotsModule,
     AttendantsModule,
+    AttendantPaymentsModule,
     UsersModule,
     SettingsModule,
     MediaModule,

@@ -326,12 +326,13 @@ model Vendor {
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
-  documents   VendorDocument[]
-  zones       VendorZone[]
-  attendants  Attendant[]
-  sessions    ParkingSession[]
-  shifts      Shift[]
-  settlements Settlement[]
+  documents     VendorDocument[]
+  zones         VendorZone[]
+  attendants    Attendant[]
+  sessions      ParkingSession[]
+  shifts        Shift[]
+  settlements   Settlement[]
+  staffPayments AttendantPayment[]
 
   @@index([status])
 }
@@ -375,6 +376,7 @@ model Attendant {
 
   shifts   Shift[]
   sessions ParkingSession[]
+  payments AttendantPayment[]
 
   @@index([vendorId, isActive])
 }
@@ -1205,4 +1207,48 @@ model OtpRequest {
   createdAt  DateTime  @default(now())
 
   @@index([phone, createdAt])
+}
+
+/// How a vendor handed the money over.
+enum AttendantPayMode {
+  CASH
+  UPI
+  BANK_TRANSFER
+}
+
+/**
+ * What a vendor paid one of their attendants.
+ * KMC contracts the vendor and settles with the vendor; the vendor employs the
+ * attendant and pays them. That second leg used to happen entirely on paper,
+ * which meant the only record that an attendant had been paid at all lived in
+ * a notebook belonging to the person who owed them the money.
+ * Deliberately NOT a LedgerEntry. The shared ledger is read by the authority,
+ * and what a vendor pays their own staff is the vendor's business — recording
+ * it there would publish every wage in the city to anyone holding
+ * `settlement.read`. This table is scoped to its vendor in the service layer
+ * and read nowhere else.
+ * `reference` is whatever proves it moved: a UPI transaction id, a bank UTR, or
+ * the number on a cash voucher the attendant signed.
+ */
+model AttendantPayment {
+  id           String           @id @default(cuid())
+  vendorId     String
+  vendor       Vendor           @relation(fields: [vendorId], references: [id])
+  attendantId  String
+  attendant    Attendant        @relation(fields: [attendantId], references: [id])
+  amount       Int // paise
+  mode         AttendantPayMode
+  /// Optional: the work this covers, when a vendor pays by period rather than per shift.
+  periodStart  DateTime?
+  periodEnd    DateTime?
+  /// UPI transaction id, bank UTR, or a cash voucher number.
+  reference    String?
+  note         String?
+  paidAt       DateTime         @default(now())
+  /// The user who entered it. Always a vendor account; kept for the audit trail.
+  recordedById String
+  createdAt    DateTime         @default(now())
+
+  @@index([vendorId, paidAt])
+  @@index([attendantId, paidAt])
 }
