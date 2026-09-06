@@ -62,6 +62,42 @@ const schema = z.object({
   /** Optional. Adds PIN code, ASN and VPN/proxy detection to sign-in records. */
   IPINFO_TOKEN: z.string().optional(),
 
+  /**
+   * Encrypts the camera credentials at rest, and nothing else so far.
+   *
+   * Optional, and its absence is a refusal rather than a downgrade: with no key
+   * set, registering a camera that carries a username and password is rejected
+   * with a message naming this variable. The alternative — a built-in
+   * development key — writes ciphertext anybody with the source can read into a
+   * column whose whole purpose is that they cannot, and it looks identical to
+   * the real thing in every screen and every backup.
+   *
+   * 32 characters minimum because it is stretched with scrypt into a 256-bit
+   * key; longer is better and `openssl rand -base64 48` is the intended way to
+   * produce one. Losing it means the stored credentials cannot be decrypted and
+   * each camera has to be given its password again.
+   */
+  ENCRYPTION_KEY: z.string().min(32, "ENCRYPTION_KEY must be at least 32 characters").optional(),
+
+  /**
+   * The streaming gateway: a media server that pulls RTSP from the cameras and
+   * republishes it as something a browser can play.
+   *
+   * MediaMTX is the implementation these three address (control API on 9997,
+   * HLS on 8888, WebRTC/WHEP on 8889), reached through `StreamGatewayService`
+   * so nothing above that file knows which product it is.
+   *
+   * The control URL is internal — it configures the server and must never be
+   * reachable from a browser. The other two are what the browser itself opens,
+   * so in a real deployment they are public hostnames rather than a service
+   * name on a container network. All three unset means no gateway, which the
+   * playback endpoint reports as such instead of handing out a dead player.
+   */
+  MEDIAMTX_CONTROL_URL: z.string().url().optional(),
+  MEDIAMTX_HLS_BASE: z.string().url().optional(),
+  MEDIAMTX_WEBRTC_BASE: z.string().url().optional(),
+  MEDIAMTX_TIMEOUT_MS: z.coerce.number().default(5000),
+
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 
   /**
