@@ -1299,6 +1299,39 @@ model Camera {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
+  // ---------------------------------------------------------------- source
+  // Where the picture comes from. All of this is the gateway's business and
+  // none of it is the browser's: `rtspUrl` reaches a client only with its
+  // userinfo stripped, and the two credential columns never leave the server
+  // at all. See CamerasService for what a response is allowed to carry.
+
+  /// RTSP address the gateway pulls from, e.g. rtsp://10.20.0.4:554/Streaming/Channels/101
+  rtspUrl     String?
+  /// ONVIF service address, where the make supports it. Used for PTZ and device facts.
+  onvifUrl    String?
+  /// AES-256-GCM ciphertext. Decrypted only to hand the gateway a source URL.
+  usernameEnc String?
+  passwordEnc String?
+
+  // ------------------------------------------------------------- the device
+  /// How many bays this camera can see. A planning figure, not a constraint.
+  coverageSlots Int?
+  /// Infra-red: whether a picture at night is worth expecting.
+  hasIR         Boolean @default(false)
+  /// Pan/tilt/zoom, which is the difference between a fixed view and a movable one.
+  hasPTZ        Boolean @default(false)
+  /// Taken out of service without losing what it recorded or who watched it.
+  isActive      Boolean @default(true)
+
+  // ------------------------------------------------------------ last probe
+  /// Filled in by POST /cameras/:id/probe, which asks the camera itself.
+  resolution String?
+  fps        Int?
+  probedAt   DateTime?
+  /// Why the last probe failed, in the words ffprobe used. Null when it worked.
+  probeError String?
+
   @@index([streetId, status])
   @@index([status])
+  @@index([isActive, status])
 }

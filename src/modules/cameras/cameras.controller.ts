@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 
 import { zodPipe } from "@/common/pipes/zod-validation.pipe";
@@ -98,5 +98,59 @@ export class CamerasController {
     @RequestId() requestId: string,
   ) {
     return this.cameras.update(id, dto, user, { ip, requestId });
+  }
+
+  /**
+   * `camera.manage` rather than `camera.view`, because this is the plumbing
+   * rather than the picture: the address the gateway pulls from, and whether
+   * credentials are stored. Neither the username nor the password is in the
+   * answer — see CamerasService.connection.
+   */
+  @RequirePermissions("camera.manage")
+  @Get(":id/connection")
+  @ApiOperation({
+    summary: "How a camera is plumbed in",
+    description:
+      "For filling in the edit form. The RTSP address comes back with any credentials " +
+      "stripped out of it, and the stored username and password never come back at all.",
+  })
+  connection(@Param("id") id: string) {
+    return this.cameras.connection(id);
+  }
+
+  @RequirePermissions("camera.manage")
+  @Post(":id/probe")
+  @ApiOperation({
+    summary: "Ask the camera whether it is there",
+    description:
+      "Opens the stream with ffprobe and records what answered: resolution, frame rate and " +
+      "codec, or the reason it did not. Takes up to eight seconds. A status somebody set by " +
+      "hand — maintenance, decommissioned — is reported on but not overwritten.",
+  })
+  probe(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() ip: string,
+    @RequestId() requestId: string,
+  ) {
+    return this.cameras.probe(id, user, { ip, requestId });
+  }
+
+  @RequirePermissions("camera.manage")
+  @Delete(":id")
+  @ApiOperation({
+    summary: "Remove a camera",
+    description:
+      "For one that was never there — a duplicate, a typo, a plan that changed. A camera that " +
+      "exists but is off the network should be marked out of service instead, which keeps its " +
+      "history.",
+  })
+  remove(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() ip: string,
+    @RequestId() requestId: string,
+  ) {
+    return this.cameras.remove(id, user, { ip, requestId });
   }
 }
