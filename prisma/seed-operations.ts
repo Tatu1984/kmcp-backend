@@ -153,12 +153,27 @@ export async function seedOperations(prisma: PrismaClient): Promise<void> {
   const vehicles = load<VehicleRow>("vehicles.json");
   const sessions = load<SessionRow>("sessions.json");
 
+  /**
+   * Matched on either key, and left alone where it exists.
+   *
+   * `upsert({ where: { code } })` with an id in the `create` is a trap this
+   * file already avoids for zones and had not for wards: the portal can edit a
+   * ward's code, the lookup then misses, and the create collides on an id that
+   * is very much still there. That is exactly what a re-run against a database
+   * somebody has been using hit — every seeded ward had been renumbered from
+   * `W045` to `W-45`, and the seed died on the first one.
+   *
+   * A ward that is already there keeps its code and its name. Both are the
+   * authority's to set, and a demonstration dataset has no business changing
+   * them back.
+   */
   for (const ward of wards) {
-    await prisma.ward.upsert({
-      where: { code: ward.code },
-      create: ward,
-      update: { name: ward.name },
+    const existing = await prisma.ward.findFirst({
+      where: { OR: [{ id: ward.id }, { code: ward.code }] },
+      select: { id: true },
     });
+    if (existing) continue;
+    await prisma.ward.create({ data: ward });
   }
   console.log(`✔ ${wards.length} wards`);
 
@@ -310,17 +325,29 @@ export async function seedOperations(prisma: PrismaClient): Promise<void> {
       update: { passwordHash },
     });
 
-    await prisma.attendant.upsert({
-      where: { employeeCode: attendant.code },
-      create: {
-        id: attendant.id,
-        userId,
-        vendorId: attendant.vendorId,
-        employeeCode: attendant.code,
-        defaultZoneId: zoneId.get(attendant.zoneId),
-      },
-      update: { defaultZoneId: zoneId.get(attendant.zoneId) },
+    // Same trap as the wards above: keyed on the employee code, created with an
+    // id. A code edited in the portal would send this down the create path and
+    // straight into the id that is already taken.
+    const existingAttendant = await prisma.attendant.findFirst({
+      where: { OR: [{ id: attendant.id }, { employeeCode: attendant.code }] },
+      select: { id: true },
     });
+    if (existingAttendant) {
+      await prisma.attendant.update({
+        where: { id: existingAttendant.id },
+        data: { defaultZoneId: zoneId.get(attendant.zoneId) },
+      });
+    } else {
+      await prisma.attendant.create({
+        data: {
+          id: attendant.id,
+          userId,
+          vendorId: attendant.vendorId,
+          employeeCode: attendant.code,
+          defaultZoneId: zoneId.get(attendant.zoneId),
+        },
+      });
+    }
   }
   console.log(`✔ ${attendants.length} attendants`);
 
