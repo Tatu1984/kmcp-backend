@@ -1,0 +1,34 @@
+# TLS in front of MediaMTX.
+#
+# The portal is served over HTTPS, so these must be too: a browser blocks
+# http:// media on an https:// page as mixed content, and does it silently —
+# the camera tile sits on "connecting" forever with nothing to say why.
+#
+# Caddy obtains and renews the certificates itself. Both names must resolve to
+# this box before it starts, or the ACME challenge fails.
+
+{
+	email {$ACME_EMAIL}
+}
+
+# HLS: the default transport, a few seconds behind, plays everywhere.
+video.{$DOMAIN} {
+	reverse_proxy mediamtx:8888
+
+	# The portal is a different origin, and asks for the playlist with fetch.
+	header {
+		Access-Control-Allow-Origin "*"
+		-Server
+	}
+}
+
+# WebRTC signalling (WHEP). The media itself travels over UDP 8189 direct to
+# the container and does not pass through here.
+webrtc.{$DOMAIN} {
+	reverse_proxy mediamtx:8889
+
+	header {
+		Access-Control-Allow-Origin "*"
+		-Server
+	}
+}

@@ -1,0 +1,36 @@
+# For the NAT topology: MediaMTX on a small box at the kerb, not in the cloud.
+#
+# Nothing in a datacentre can dial a camera on 10.20.0.x. So this runs on the
+# camera network, pulls each camera locally, and pushes the result out to the
+# gateway over one outbound connection, which NAT allows.
+#
+# Run with:
+#   docker run -d --restart unless-stopped -v $PWD/edge-agent.yml:/mediamtx.yml \
+#     bluenviron/mediamtx:1.11.3
+#
+# One block per camera. The path name must match that camera's stream key, which
+# the portal shows under Edit — it is the name the gateway serves it under.
+
+logLevel: info
+api: no
+rtsp: yes
+rtspTransports: [tcp]
+hls: no
+webrtc: no
+rtmp: no
+
+paths:
+  cam-camac-01:
+    source: rtsp://admin:PASSWORD@10.20.0.4:554/Streaming/Channels/101
+    sourceOnDemand: no
+    # Push to the gateway. The credentials are the publish account from
+    # .env.example, not the camera's.
+    runOnReady: >
+      ffmpeg -i rtsp://localhost:$RTSP_PORT/$MTX_PATH
+      -c copy -f rtsp
+      rtsp://publish:PUBLISH_PASSWORD@video.example.com:8554/$MTX_PATH
+    runOnReadyRestart: yes
+
+  # cam-camac-02:
+  #   source: rtsp://admin:PASSWORD@10.20.0.5:554/Streaming/Channels/101
+  #   ...
