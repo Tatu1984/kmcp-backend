@@ -391,11 +391,12 @@ model Ward {
 }
 
 model Street {
-  id     String @id @default(cuid())
-  wardId String
-  ward   Ward   @relation(fields: [wardId], references: [id])
-  name   String
-  zones  Zone[]
+  id      String   @id @default(cuid())
+  wardId  String
+  ward    Ward     @relation(fields: [wardId], references: [id])
+  name    String
+  zones   Zone[]
+  cameras Camera[]
 
   @@index([wardId])
 }
@@ -1251,4 +1252,53 @@ model AttendantPayment {
 
   @@index([vendorId, paidAt])
   @@index([attendantId, paidAt])
+}
+
+/// A camera's last known state, as reported by the streaming gateway.
+enum CameraStatus {
+  ONLINE
+  OFFLINE
+  DEGRADED
+  MAINTENANCE
+  DECOMMISSIONED
+}
+
+/**
+ * A CCTV camera on a road.
+ * Filed against a Street rather than a Zone because that is where the hardware
+ * physically is: one stretch of kerb carries two or three cameras, and the
+ * zones priced along it come and go without anybody climbing a pole. A zone's
+ * cameras are the ones on its street.
+ * ── What is deliberately not here ──
+ * No RTSP URL and no credentials. A camera password in a database row is a
+ * camera password in every backup, every replica and every developer's laptop,
+ * and it is the one secret that turns a parking system into somebody's window
+ * into a street. `streamKey` names a stream on the gateway; the gateway holds
+ * the connection details, and clients are handed a short-lived signed playback
+ * URL rather than anything they could reconnect with themselves.
+ * No recording fields either. This records live viewing only — a decision worth
+ * keeping deliberate, because footage retained is footage that falls under the
+ * DPDP Act's retention and subject-access duties, and none of that machinery is
+ * warranted for a picture nobody keeps.
+ */
+model Camera {
+  id          String       @id @default(cuid())
+  streetId    String
+  street      Street       @relation(fields: [streetId], references: [id])
+  /// Stable identifier stencilled on the housing, so a fault report names something findable.
+  code        String       @unique
+  /// Where it points, in words an engineer on the pavement would use.
+  label       String
+  makeModel   String?
+  /// Names this camera's stream on the gateway. Never a URL, never a credential.
+  streamKey   String?      @unique
+  status      CameraStatus @default(OFFLINE)
+  /// Last heartbeat from the gateway. Null means it has never been seen.
+  lastSeenAt  DateTime?
+  installedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([streetId, status])
+  @@index([status])
 }
