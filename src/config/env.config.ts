@@ -94,6 +94,24 @@ const schema = z.object({
    * playback endpoint reports as such instead of handing out a dead player.
    */
   MEDIAMTX_CONTROL_URL: z.string().url().optional(),
+  /**
+   * Credentials for the control API, when it is not on a private network.
+   *
+   * It would be better if it never were. The control API configures which
+   * camera the server pulls, so anyone who reaches it can point the gateway at
+   * a camera of their choosing — which is why the first draft of the
+   * deployment bound it to localhost and said so.
+   *
+   * That assumed the API could reach it privately, and on Vercel it cannot: a
+   * serverless function has no fixed egress address to allow through a
+   * firewall. So the control API is published over TLS with a password in
+   * front of it, and these are it. Set them and every control request carries
+   * basic authentication; leave them unset and none does, which is right when
+   * the API and the gateway do share a network — the AWS deployment this is
+   * headed for.
+   */
+  MEDIAMTX_CONTROL_USER: z.string().optional(),
+  MEDIAMTX_CONTROL_PASSWORD: z.string().optional(),
   MEDIAMTX_HLS_BASE: z.string().url().optional(),
   MEDIAMTX_WEBRTC_BASE: z.string().url().optional(),
   MEDIAMTX_TIMEOUT_MS: z.coerce.number().default(5000),

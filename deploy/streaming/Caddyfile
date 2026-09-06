@@ -32,3 +32,24 @@ webrtc.{$DOMAIN} {
 		-Server
 	}
 }
+
+# The control API, which the KMCP API calls to point the gateway at a camera.
+#
+# This would be better off private, and the first draft of this deployment kept
+# it that way — anyone who reaches it can configure this server to pull any
+# camera they like. It is published because the API runs on Vercel, where a
+# serverless function has no fixed egress address to allow through a firewall,
+# so there is no private path to keep it on.
+#
+# What defends it instead: TLS, a password the API sends on every request, and
+# a hostname that appears in no page. If the API ever moves to a box on this
+# network — the AWS plan — delete this block, publish 9997 to localhost in
+# docker-compose.yml, and drop the two credentials from the environment.
+control.{$DOMAIN} {
+	basic_auth {
+		{$CONTROL_USER} {$CONTROL_PASSWORD_HASH}
+	}
+	reverse_proxy mediamtx:9997
+
+	header -Server
+}

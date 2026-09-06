@@ -72,11 +72,14 @@ authInternalUsers:
     permissions:
       - action: publish
 
-  # The control API authenticates by not being reachable, which is stronger than
-  # a password on a port anyone can open.
+  # The control API. Reached only through Caddy, which is on the container
+  # network and asks for a password first, so what arrives here has already been
+  # authenticated once. The address restriction is the second lock: MediaMTX
+  # refuses an API call that did not come from inside this deployment, so an
+  # exposed port alone is not enough.
   - user: any
     # Quoted: "::1" unquoted is not a YAML scalar, and MediaMTX refuses the
     # whole file rather than the line.
-    ips: ["127.0.0.1", "::1"]
+    ips: ["127.0.0.1", "::1", "172.16.0.0/12", "192.168.0.0/16", "10.0.0.0/8"]
     permissions:
       - action: api

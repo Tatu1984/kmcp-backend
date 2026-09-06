@@ -133,6 +133,43 @@ describe("the streaming gateway", () => {
     });
   });
 
+  it("authenticates control requests when credentials are set", async () => {
+    const gateway = new StreamGatewayService(
+      config({
+        MEDIAMTX_CONTROL_URL: "https://control.example.com",
+        MEDIAMTX_CONTROL_USER: "kmcp",
+        MEDIAMTX_CONTROL_PASSWORD: "s3cret",
+      }),
+    );
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+
+    await gateway.register("cam-1", { rtspUrl: "rtsp://10.20.0.4/s1" });
+
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    // "kmcp:s3cret" — the control API is published on Vercel deployments, so
+    // this header is the only thing in front of it.
+    expect(headers.authorization).toBe(`Basic ${Buffer.from("kmcp:s3cret").toString("base64")}`);
+    fetchSpy.mockRestore();
+  });
+
+  it("sends no credentials when none are configured, which is the private-network case", async () => {
+    const gateway = new StreamGatewayService(
+      config({ MEDIAMTX_CONTROL_URL: "http://mediamtx:9997" }),
+    );
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+
+    await gateway.register("cam-1", { rtspUrl: "rtsp://10.20.0.4/s1" });
+
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>).authorization).toBeUndefined();
+    fetchSpy.mockRestore();
+  });
+
   it("does nothing at all when unconfigured, rather than failing a save", async () => {
     const gateway = new StreamGatewayService(config({}));
     const fetchSpy = vi.spyOn(globalThis, "fetch");
