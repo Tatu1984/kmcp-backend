@@ -61,10 +61,13 @@ connections and serverless functions do not.
 
 ## Standing it up
 
+**On AWS, follow `AWS.md`** — instance size, firewall rules, DNS, and the
+commands in order. In outline it is:
+
 ```bash
 # on the box
-git clone <this repo> && cd deploy/streaming
-cp .env.example .env      # set DOMAIN, ACME_EMAIL, and the two passwords
+cp .env.example .env      # DOMAIN, ACME_EMAIL, the gateway passwords,
+                          # and the control credentials
 docker compose up -d
 ```
 
@@ -83,9 +86,26 @@ no commit can reach:
 
 | Variable | Value | Notes |
 | --- | --- | --- |
-| `MEDIAMTX_CONTROL_URL` | `http://<private-ip>:9997` | Internal only. Never a public hostname. |
+| `MEDIAMTX_CONTROL_URL` | `https://control.<your-domain>` | See below — this one wants to be private and cannot be. |
+| `MEDIAMTX_CONTROL_USER` | `kmcp-api` | Matches `CONTROL_USER` in the gateway's `.env`. |
+| `MEDIAMTX_CONTROL_PASSWORD` | the plaintext password | Caddy stores only its hash. |
 | `MEDIAMTX_HLS_BASE` | `https://video.<your-domain>` | What the browser opens. Must be HTTPS. |
 | `MEDIAMTX_WEBRTC_BASE` | `https://webrtc.<your-domain>` | Same. |
+
+**Why the control API is published, when it should not be.** It configures which
+camera the gateway pulls, so anyone who reaches it can point this server at a
+camera of their choosing — it belongs on a private network, and an earlier draft
+of this kit bound it to localhost accordingly. That assumed the API could reach
+it privately. It cannot: the API runs on Vercel, and a serverless function has
+no fixed egress address to allow through a firewall. So it is served over TLS,
+behind a password the API sends on every request, on a hostname that appears in
+no page, and MediaMTX additionally refuses an API call that did not arrive from
+inside the deployment.
+
+When the API moves to ECS in the same VPC — which is the production plan — this
+goes back to being private and the credentials come out of the environment. The
+code sends none when none are set, so that is a configuration change rather than
+a deployment. `AWS.md` says how.
 
 And one more, unrelated to the gateway but needed before any camera can be
 registered with a password:

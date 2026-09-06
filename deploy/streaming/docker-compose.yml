@@ -25,10 +25,10 @@ services:
       # one port is published directly. It carries no signalling and no
       # credentials — the handshake that sets it up went over HTTPS.
       - "8189:8189/udp"
-      # The control API. Bound to the loopback address on the host on purpose:
-      # anyone who reaches it can point this server at any camera they like.
-      # The API reaches it over the private network or an SSH tunnel.
-      - "127.0.0.1:9997:9997"
+      # The control API is NOT published here. Caddy reaches it over the
+      # container network and serves it at control.<domain> behind TLS and a
+      # password — see the Caddyfile, and the note there about why it cannot
+      # simply stay private.
     networks: [gateway]
 
   caddy:
@@ -38,6 +38,10 @@ services:
     environment:
       DOMAIN: ${DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
+      CONTROL_USER: ${CONTROL_USER}
+      # A bcrypt hash, not the password. Generate with:
+      #   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<pw>'
+      CONTROL_PASSWORD_HASH: ${CONTROL_PASSWORD_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

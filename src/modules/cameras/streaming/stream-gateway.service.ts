@@ -73,6 +73,24 @@ export class StreamGatewayService {
     };
   }
 
+  /**
+   * Basic authentication for the control API, when it is exposed.
+   *
+   * Absent by default, and that is the better arrangement: a control API on a
+   * private network needs no password because it cannot be reached. It has one
+   * here because the API runs on Vercel, where a serverless function has no
+   * fixed egress address to allow through a firewall, so the gateway's control
+   * plane has to be published and defended rather than hidden.
+   */
+  private authHeader(): Record<string, string> {
+    const user = this.config.get("MEDIAMTX_CONTROL_USER", { infer: true });
+    const password = this.config.get("MEDIAMTX_CONTROL_PASSWORD", { infer: true });
+    if (!user || !password) return {};
+    return {
+      authorization: `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`,
+    };
+  }
+
   private async call(method: string, path: string, body?: unknown): Promise<Response | null> {
     const base = this.controlUrl;
     if (!base) return null;
@@ -84,7 +102,10 @@ export class StreamGatewayService {
     try {
       return await fetch(`${base.replace(/\/+$/, "")}${path}`, {
         method,
-        headers: body ? { "content-type": "application/json" } : undefined,
+        headers: {
+          ...(body ? { "content-type": "application/json" } : {}),
+          ...this.authHeader(),
+        },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
