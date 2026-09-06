@@ -184,6 +184,17 @@ export class SettlementsService {
   }
 
   private async generateOnce(dto: GenerateSettlementDto, user: AuthenticatedUser, ctx: Ctx) {
+    /**
+     * The vendor to settle arrives in the body, which is the one place on this
+     * service where the caller chooses whose money is being looked at rather
+     * than the scope filter choosing for them. An account that belongs to an
+     * operator may therefore only ever name itself — and today no such account
+     * holds the grant to reach here at all, which is the belt to this brace.
+     */
+    if (user.vendorId && user.vendorId !== dto.vendorId) {
+      throw AppException.forbidden("You can only settle your own operation.");
+    }
+
     const vendor = await this.prisma.vendor.findUnique({
       where: { id: dto.vendorId },
       select: { id: true, orgName: true, commissionPct: true },

@@ -36,11 +36,29 @@ const VerifySchema = z.object({ verified: z.boolean() });
 export class VendorsController {
   constructor(private readonly vendors: VendorsService) {}
 
-  @RequirePermissions("vendor.read")
+  /**
+   * Self-service, and deliberately not behind `vendor.read`.
+   *
+   * `vendor.read` is the authority's permission for reading the contractor
+   * register — who is approved, whose KYC is outstanding, what commission each
+   * one is on. The seeded VENDOR role does not hold it and should not: granting
+   * it to let an operator see their own takings would also hand them `GET
+   * /vendors`, which is every competitor's name, bank account and margin.
+   *
+   * So the gate is the shape of the answer instead. This route reads
+   * `user.vendorId` off the token and can address no other operator; the
+   * service refuses outright any caller that has no vendor of their own, which
+   * is what an administrator or an auditor calling it will meet. That is the
+   * same structural boundary `AttendantPaymentsService.vendorOf()` draws, and
+   * for the same reason — a permission check would answer the wrong question,
+   * because a superuser passes every permission check by definition.
+   */
   @Get("dashboard")
   @ApiOperation({
     summary: "The vendor app home screen in one call",
-    description: "Active parking, today's cash and digital collection, and settlement due.",
+    description:
+      "Active parking, today's cash and digital collection, and settlement due — always for " +
+      "the calling account's own vendor. Refused for a caller that is not an operator.",
   })
   dashboard(@CurrentUser() user: AuthenticatedUser) {
     return this.vendors.dashboard(user);
