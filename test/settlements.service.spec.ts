@@ -327,4 +327,42 @@ describe("vendor scoping", () => {
 
     expect(prisma.settlement.findMany.mock.calls[0][0].where).toMatchObject({ vendorId: "ven_1" });
   });
+
+  /**
+   * `generate` is the one route here that takes the operator to settle from the
+   * request body instead of from the scope filter, so it is the one that has to
+   * check. The permission on the controller means no operator account can reach
+   * it at all today; this is what keeps that true if the grant is ever widened.
+   */
+  it("refuses an operator naming somebody else's operation", async () => {
+    const { service, prisma } = makeService({
+      payments: [payment("pay_1", 10_000)],
+    });
+
+    await expect(
+      service.generate({ ...PERIOD, vendorId: "ven_2" } as any, {
+        ...ADMIN,
+        role: "VENDOR",
+        vendorId: "ven_1",
+      } as any, {}),
+    ).rejects.toBeInstanceOf(AppException);
+
+    // Refused before the competitor's row is read, so not even their org name
+    // comes back in the error.
+    expect(prisma.vendor.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("lets an operator's own account settle its own period, if ever granted", async () => {
+    const { service, created } = makeService({
+      payments: [payment("pay_1", 10_000)],
+    });
+
+    await service.generate(PERIOD as any, {
+      ...ADMIN,
+      role: "VENDOR",
+      vendorId: "ven_1",
+    } as any, {});
+
+    expect(created[0].vendorId).toBe("ven_1");
+  });
 });

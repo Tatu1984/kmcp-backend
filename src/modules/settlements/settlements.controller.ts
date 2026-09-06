@@ -54,7 +54,20 @@ export class SettlementsController {
     return this.settlements.findOne(id, user);
   }
 
-  @RequirePermissions("settlement.read")
+  /**
+   * `settlement.approve`, not `settlement.read`.
+   *
+   * This route was guarded by the read grant, which is held by AUDITOR — whose
+   * whole promise is that they change nothing — and by VENDOR, who then reached
+   * a route that takes the vendor to settle *from the body*. `list` and
+   * `findOne` scope every row to the caller's own operator; this one never did,
+   * so an operator could name a competitor and get back a settlement document
+   * carrying their gross takings, their commission and their bank account.
+   *
+   * Both halves are closed: the grant is now one only the authority holds, and
+   * `generate` refuses a caller who names an operator that is not their own.
+   */
+  @RequirePermissions("settlement.approve")
   @Post("generate")
   @ApiOperation({
     summary: "Build a draft settlement for a vendor and period",
@@ -72,7 +85,8 @@ export class SettlementsController {
     return this.settlements.generate(dto, user, { ...info, requestId, idempotencyKey });
   }
 
-  @RequirePermissions("settlement.read")
+  /** Also a write, and equally not an auditor's to make. */
+  @RequirePermissions("settlement.approve")
   @Post(":id/submit")
   @ApiOperation({ summary: "Send a draft up for approval" })
   submit(

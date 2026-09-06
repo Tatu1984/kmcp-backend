@@ -146,6 +146,11 @@ function route(id: string): DiscoveredRoute {
  * runs in CI, where there is no database. The conformance test below reads the
  * real table whenever a `DATABASE_URL` is present, so the copy cannot drift
  * unnoticed.
+ *
+ * Later migrations amend those rows and must be reflected here too — the
+ * camera grants on ADMIN, and `attendant.pay.*` on VENDOR, both arrived that
+ * way. The conformance test is the only thing that catches a missed one, and
+ * it only runs where there is a database to read.
  */
 const SEEDED_ROLES = [
   {
@@ -161,6 +166,7 @@ const SEEDED_ROLES = [
     isZoneScoped: false,
     permissions: [
       "zone.read", "zone.write", "zone.status", "slot.write",
+      "camera.view", "camera.manage",
       "session.read", "session.cancel", "incident.manage",
       "vendor.read", "vendor.write", "vendor.approve", "attendant.write", "shift.verify",
       "tariff.read", "tariff.write", "tariff.publish", "discount.write", "pass.write",
@@ -193,6 +199,10 @@ const SEEDED_ROLES = [
     isZoneScoped: true,
     permissions: [
       "zone.read", "session.read", "attendant.write", "payment.read", "settlement.read",
+      // Granted by 20260905180000_attendant_payments. Vendor-only by design:
+      // what an operator pays their staff is not KMC's business, so not even
+      // ADMIN holds these.
+      "attendant.pay.read", "attendant.pay.write",
     ] as Permission[],
   },
   {
@@ -332,6 +342,14 @@ describe("every route says how it is guarded", () => {
     "NotificationsController.markAllRead",
     "NotificationsController.markRead",
     "NotificationsController.dismiss",
+
+    // --- an operator's own day (VendorsController) ---
+    // Reads `user.vendorId` off the token and can name no other operator; the
+    // service refuses a caller that has no vendor at all, which is every KMC
+    // account. Behind `vendor.read` it was refused to the only role that has
+    // any use for it — the VENDOR whose figures it returns — while `GET
+    // /vendors`, the register it would also have unlocked, stays permissioned.
+    "VendorsController.dashboard",
 
     // --- which channels this deployment can send on (MessagingController) ---
     // Returns three booleans and the template catalogue: no person, no address,
@@ -497,6 +515,17 @@ describe("answers written out by hand", () => {
     ["AttendantsController.create", "VENDOR", true],
     ["AuditController.logs", "VENDOR", false],
     ["SettlementsController.approve", "VENDOR", false],
+    // Reading its own settlements, yes. Preparing one — a route that names the
+    // operator to settle in the request body — no.
+    ["SettlementsController.list", "VENDOR", true],
+    ["SettlementsController.generate", "VENDOR", false],
+    ["SettlementsController.submit", "VENDOR", false],
+
+    // And an auditor writes nothing here either, which the read grant on those
+    // two routes had quietly allowed.
+    ["SettlementsController.list", "AUDITOR", true],
+    ["SettlementsController.generate", "AUDITOR", false],
+    ["SettlementsController.submit", "AUDITOR", false],
 
     // An attendant works the kerb and reads nothing else.
     ["ZonesController.list", "ATTENDANT", true],
