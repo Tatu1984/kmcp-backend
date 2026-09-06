@@ -1,0 +1,55 @@
+# The streaming gateway: MediaMTX behind Caddy for TLS.
+#
+# Two containers and no database. MediaMTX pulls each camera and republishes it
+# as HLS and WebRTC; Caddy terminates TLS in front of it, because the portal is
+# served over HTTPS and a browser silently blocks http:// media on an https://
+# page.
+#
+#   docker compose up -d
+#
+# See README.md for what to set in .env and which three values go back into the
+# API's environment afterwards.
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.11.3
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    environment:
+      # Read by mediamtx.yml. Kept out of the file so the file can be committed.
+      MTX_AUTHINTERNALUSERS_1_PASS: ${GATEWAY_READ_PASSWORD}
+      MTX_AUTHINTERNALUSERS_2_PASS: ${GATEWAY_PUBLISH_PASSWORD}
+    ports:
+      # WebRTC media travels over UDP and cannot be proxied by Caddy, so this
+      # one port is published directly. It carries no signalling and no
+      # credentials — the handshake that sets it up went over HTTPS.
+      - "8189:8189/udp"
+      # The control API. Bound to the loopback address on the host on purpose:
+      # anyone who reaches it can point this server at any camera they like.
+      # The API reaches it over the private network or an SSH tunnel.
+      - "127.0.0.1:9997:9997"
+    networks: [gateway]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [mediamtx]
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [gateway]
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+networks:
+  gateway:

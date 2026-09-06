@@ -199,7 +199,7 @@ describe("the connection a manager is shown", () => {
     expect(serialised).not.toContain("passwordEnc");
   });
 
-  it("names the gateway path after the code when no stream key was given", async () => {
+  it("names the gateway path after the code for a camera registered before keys were generated", async () => {
     const { service } = makeService({
       id: "cam_1",
       code: "CAM-CAMAC-01",
@@ -219,6 +219,70 @@ describe("the connection a manager is shown", () => {
     });
 
     expect((await service.connection("cam_1")).path).toBe("cam-camac-01");
+  });
+
+  /**
+   * The gateway path is a public URL segment. Until the gateway asks us who is
+   * watching, an unguessable one is the whole of what stands between a camera
+   * and anybody who can type — and `cam-camac-01` is the second thing a person
+   * would try.
+   */
+  it("gives a new camera a random path rather than its code", async () => {
+    const created: Record<string, unknown>[] = [];
+    const prisma = {
+      street: { findUnique: vi.fn().mockResolvedValue({ id: "str_1", name: "Camac Street" }) },
+      camera: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+          created.push(data);
+          return { id: "cam_new", code: data.code, label: data.label, street: { name: "Camac Street" } };
+        }),
+      },
+    };
+    const service = new CamerasService(
+      prisma as never,
+      { record: vi.fn() } as never,
+      new StreamGatewayService(config({})),
+      config({ ENCRYPTION_KEY: KEY }),
+    );
+
+    await service.create(
+      { streetId: "str_1", code: "CAM-CAMAC-01", label: "North end" } as never,
+      { id: "u1", role: "ADMIN", name: "A", zoneIds: [], sessionId: "s", isZoneScoped: false } as never,
+      {},
+    );
+
+    const key = created[0].streamKey as string;
+    expect(key).toMatch(/^[0-9a-f]{32}$/);
+    expect(key).not.toContain("camac");
+  });
+
+  it("keeps a stream key somebody chose deliberately", async () => {
+    const created: Record<string, unknown>[] = [];
+    const prisma = {
+      street: { findUnique: vi.fn().mockResolvedValue({ id: "str_1", name: "Camac Street" }) },
+      camera: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+          created.push(data);
+          return { id: "cam_new", code: data.code, label: data.label, street: { name: "Camac Street" } };
+        }),
+      },
+    };
+    const service = new CamerasService(
+      prisma as never,
+      { record: vi.fn() } as never,
+      new StreamGatewayService(config({})),
+      config({ ENCRYPTION_KEY: KEY }),
+    );
+
+    await service.create(
+      { streetId: "str_1", code: "CAM-1", label: "North end", streamKey: "chosen-by-hand" } as never,
+      { id: "u1", role: "ADMIN", name: "A", zoneIds: [], sessionId: "s", isZoneScoped: false } as never,
+      {},
+    );
+
+    expect(created[0].streamKey).toBe("chosen-by-hand");
   });
 });
 

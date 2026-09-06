@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { Injectable, Logger } from "@nestjs/common";
 import { CameraStatus, Prisma } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
@@ -72,13 +74,32 @@ export class CamerasService {
   /**
    * The path this camera answers to on the gateway.
    *
-   * Derived from the code when nothing was given, because a gateway path and a
-   * camera code are the same idea twice and nobody wants to invent a second
-   * name for the same box. Lower-cased and stripped because MediaMTX path names
-   * are URL segments.
+   * Falls back to the code for cameras registered before stream keys were
+   * generated, and that fallback is the reason this comment is long.
+   *
+   * A gateway path is a public URL segment: `https://video.<host>/<path>/index.m3u8`
+   * is what the browser fetches, and until per-viewer authorisation exists the
+   * gateway will serve it to anyone who asks. Named after the camera's code,
+   * that URL is guessable — `cam-camac-01` is the second thing anybody would
+   * try — and guessing it is a live window onto a street.
+   *
+   * So a new camera gets a random key instead (see `create`), and the URL
+   * becomes the capability: unguessable, never in a page a viewer has not been
+   * authorised for, and revocable by changing it. That is weaker than checking
+   * who is watching on every segment request and is not pretending otherwise —
+   * MediaMTX can defer that check to us over `authHTTPAddress`, and
+   * `deploy/streaming/README.md` names it as the next piece of work.
    */
   private pathFor(camera: { code: string; streamKey?: string | null }): string {
     return camera.streamKey ?? camera.code.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+  }
+
+  /**
+   * 32 hex characters, which is what stands between a camera and the internet
+   * until the gateway asks us who is watching.
+   */
+  private newStreamKey(): string {
+    return randomBytes(16).toString("hex");
   }
 
   private get encryptionKey(): string | undefined {
@@ -369,7 +390,13 @@ export class CamerasService {
     const { username: _u, password: _p, ...fields } = dto;
 
     const camera = await this.prisma.camera.create({
-      data: { ...fields, ...this.credentialColumns(dto) },
+      data: {
+        ...fields,
+        // Generated unless somebody deliberately named one — a gateway path is
+        // a public URL, and a predictable one is a window onto a street.
+        streamKey: dto.streamKey ?? this.newStreamKey(),
+        ...this.credentialColumns(dto),
+      },
       select: CAMERA_SELECT,
     });
 
