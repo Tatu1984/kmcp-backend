@@ -326,12 +326,13 @@ model Vendor {
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
-  documents   VendorDocument[]
-  zones       VendorZone[]
-  attendants  Attendant[]
-  sessions    ParkingSession[]
-  shifts      Shift[]
-  settlements Settlement[]
+  documents     VendorDocument[]
+  zones         VendorZone[]
+  attendants    Attendant[]
+  sessions      ParkingSession[]
+  shifts        Shift[]
+  settlements   Settlement[]
+  staffPayments AttendantPayment[]
 
   @@index([status])
 }
@@ -375,6 +376,7 @@ model Attendant {
 
   shifts   Shift[]
   sessions ParkingSession[]
+  payments AttendantPayment[]
 
   @@index([vendorId, isActive])
 }
@@ -389,11 +391,12 @@ model Ward {
 }
 
 model Street {
-  id     String @id @default(cuid())
-  wardId String
-  ward   Ward   @relation(fields: [wardId], references: [id])
-  name   String
-  zones  Zone[]
+  id      String   @id @default(cuid())
+  wardId  String
+  ward    Ward     @relation(fields: [wardId], references: [id])
+  name    String
+  zones   Zone[]
+  cameras Camera[]
 
   @@index([wardId])
 }
@@ -1205,4 +1208,97 @@ model OtpRequest {
   createdAt  DateTime  @default(now())
 
   @@index([phone, createdAt])
+}
+
+/// How a vendor handed the money over.
+enum AttendantPayMode {
+  CASH
+  UPI
+  BANK_TRANSFER
+}
+
+/**
+ * What a vendor paid one of their attendants.
+ * KMC contracts the vendor and settles with the vendor; the vendor employs the
+ * attendant and pays them. That second leg used to happen entirely on paper,
+ * which meant the only record that an attendant had been paid at all lived in
+ * a notebook belonging to the person who owed them the money.
+ * Deliberately NOT a LedgerEntry. The shared ledger is read by the authority,
+ * and what a vendor pays their own staff is the vendor's business — recording
+ * it there would publish every wage in the city to anyone holding
+ * `settlement.read`. This table is scoped to its vendor in the service layer
+ * and read nowhere else.
+ * `reference` is whatever proves it moved: a UPI transaction id, a bank UTR, or
+ * the number on a cash voucher the attendant signed.
+ */
+model AttendantPayment {
+  id           String           @id @default(cuid())
+  vendorId     String
+  vendor       Vendor           @relation(fields: [vendorId], references: [id])
+  attendantId  String
+  attendant    Attendant        @relation(fields: [attendantId], references: [id])
+  amount       Int // paise
+  mode         AttendantPayMode
+  /// Optional: the work this covers, when a vendor pays by period rather than per shift.
+  periodStart  DateTime?
+  periodEnd    DateTime?
+  /// UPI transaction id, bank UTR, or a cash voucher number.
+  reference    String?
+  note         String?
+  paidAt       DateTime         @default(now())
+  /// The user who entered it. Always a vendor account; kept for the audit trail.
+  recordedById String
+  createdAt    DateTime         @default(now())
+
+  @@index([vendorId, paidAt])
+  @@index([attendantId, paidAt])
+}
+
+/// A camera's last known state, as reported by the streaming gateway.
+enum CameraStatus {
+  ONLINE
+  OFFLINE
+  DEGRADED
+  MAINTENANCE
+  DECOMMISSIONED
+}
+
+/**
+ * A CCTV camera on a road.
+ * Filed against a Street rather than a Zone because that is where the hardware
+ * physically is: one stretch of kerb carries two or three cameras, and the
+ * zones priced along it come and go without anybody climbing a pole. A zone's
+ * cameras are the ones on its street.
+ * ── What is deliberately not here ──
+ * No RTSP URL and no credentials. A camera password in a database row is a
+ * camera password in every backup, every replica and every developer's laptop,
+ * and it is the one secret that turns a parking system into somebody's window
+ * into a street. `streamKey` names a stream on the gateway; the gateway holds
+ * the connection details, and clients are handed a short-lived signed playback
+ * URL rather than anything they could reconnect with themselves.
+ * No recording fields either. This records live viewing only — a decision worth
+ * keeping deliberate, because footage retained is footage that falls under the
+ * DPDP Act's retention and subject-access duties, and none of that machinery is
+ * warranted for a picture nobody keeps.
+ */
+model Camera {
+  id          String       @id @default(cuid())
+  streetId    String
+  street      Street       @relation(fields: [streetId], references: [id])
+  /// Stable identifier stencilled on the housing, so a fault report names something findable.
+  code        String       @unique
+  /// Where it points, in words an engineer on the pavement would use.
+  label       String
+  makeModel   String?
+  /// Names this camera's stream on the gateway. Never a URL, never a credential.
+  streamKey   String?      @unique
+  status      CameraStatus @default(OFFLINE)
+  /// Last heartbeat from the gateway. Null means it has never been seen.
+  lastSeenAt  DateTime?
+  installedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([streetId, status])
+  @@index([status])
 }

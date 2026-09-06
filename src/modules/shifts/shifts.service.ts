@@ -37,7 +37,10 @@ const SHIFT_SELECT = {
   attendant: {
     select: { id: true, employeeCode: true, user: { select: { name: true, phone: true } } },
   },
-  vendor: { select: { id: true, orgName: true } },
+  // commissionPct travels with the shift so the handset can show an attendant
+  // their own vendor's share without calling /revenue, which is scoped to the
+  // VENDOR role and would otherwise hand a kerbside attendant city-wide totals.
+  vendor: { select: { id: true, orgName: true, commissionPct: true } },
   zone: { select: { id: true, code: true, name: true } },
 } satisfies Prisma.ShiftSelect;
 
