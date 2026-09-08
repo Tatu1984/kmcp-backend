@@ -343,6 +343,7 @@ model VendorDocument {
   vendor     Vendor    @relation(fields: [vendorId], references: [id])
   type       String // KYC | GST | PAN | AGREEMENT | BANK_PROOF
   mediaId    String
+  media      Media     @relation(fields: [mediaId], references: [id])
   verifiedBy String?
   verifiedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -622,6 +623,8 @@ model Media {
   bucket       String
   mimeType     String
   sizeBytes    Int
+  /** The name the uploader's file had on their own machine, not the object key. */
+  fileName     String?
   sha256       String?
   purpose      MediaPurpose
   capturedAt   DateTime?
@@ -630,6 +633,8 @@ model Media {
   uploadedById String?
   isImmutable  Boolean      @default(false)
   createdAt    DateTime     @default(now())
+
+  vendorDocuments VendorDocument[]
 
   @@index([purpose, createdAt])
 }

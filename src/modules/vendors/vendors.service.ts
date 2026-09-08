@@ -30,7 +30,7 @@ import type {
 const SORTABLE = ["orgName", "createdAt", "commissionPct", "status"] as const;
 
 /** The documents a vendor must have verified before money can leave the building. */
-const REQUIRED_DOCS = ["AGREEMENT", "GST", "PAN", "BANK_PROOF"] as const;
+const REQUIRED_DOCS = ["AGREEMENT", "GST", "PAN", "BANK_PROOF", "KYC"] as const;
 
 const VENDOR_SELECT = {
   id: true,
@@ -49,7 +49,15 @@ const VENDOR_SELECT = {
   createdAt: true,
   user: { select: { id: true, email: true, status: true, lastLoginAt: true } },
   documents: {
-    select: { id: true, type: true, mediaId: true, verifiedBy: true, verifiedAt: true, createdAt: true },
+    select: {
+      id: true,
+      type: true,
+      mediaId: true,
+      verifiedBy: true,
+      verifiedAt: true,
+      createdAt: true,
+      media: { select: { fileName: true, mimeType: true } },
+    },
   },
   _count: { select: { zones: true, attendants: true } },
 } satisfies Prisma.VendorSelect;

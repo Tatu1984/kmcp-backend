@@ -40,6 +40,8 @@ export const ConfirmUploadSchema = z.object({
   purpose: z.nativeEnum(MediaPurpose),
   mimeType: z.enum([...IMAGE, ...DOCUMENT]),
   sizeBytes: z.number().int().min(1).max(MAX_UPLOAD_BYTES),
+  /** The name the file had on the uploader's own machine, for display and download. */
+  fileName: z.string().trim().max(200).optional(),
   /** Lets the server detect a file that changed between upload and confirm. */
   sha256: z.string().trim().length(64).optional(),
   /** From the device, for evidence — when and where the photograph was taken. */

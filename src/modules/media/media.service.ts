@@ -205,6 +205,7 @@ export class MediaService {
         bucket: this.bucket,
         mimeType: dto.mimeType,
         sizeBytes: dto.sizeBytes,
+        fileName: dto.fileName,
         sha256: dto.sha256,
         purpose: dto.purpose,
         capturedAt: dto.capturedAt,
