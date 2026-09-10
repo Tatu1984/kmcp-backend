@@ -37,6 +37,8 @@ import { NotificationsModule } from "./modules/notifications/notifications.modul
 import { MessagingModule } from "./modules/messaging/messaging.module";
 import { PassesModule } from "./modules/passes/passes.module";
 import { CitizensModule } from "./modules/citizens/citizens.module";
+import { MeModule } from "./modules/me/me.module";
+import { WalletModule } from "./modules/wallet/wallet.module";
 import { SettlementsModule } from "./modules/settlements/settlements.module";
 import { AnalyticsModule } from "./modules/analytics/analytics.module";
 import { ReportsModule } from "./modules/reports/reports.module";
@@ -89,6 +91,8 @@ import { CronModule } from "./modules/cron/cron.module";
     MessagingModule,
     PassesModule,
     CitizensModule,
+    MeModule,
+    WalletModule,
     SettlementsModule,
     AnalyticsModule,
     ReportsModule,

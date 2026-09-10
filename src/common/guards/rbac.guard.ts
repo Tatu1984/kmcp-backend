@@ -5,6 +5,7 @@ import { AppException } from "../errors/app.exception";
 import type { Permission, RoleCode } from "../rbac/permissions";
 import { RolesService } from "../rbac/roles.service";
 import {
+  ANY_PERMISSIONS_KEY,
   IS_PUBLIC_KEY,
   PERMISSIONS_KEY,
   ROLES_KEY,
@@ -38,8 +39,12 @@ export class RbacGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    const anyPermissions = this.reflector.getAllAndOverride<Permission[]>(ANY_PERMISSIONS_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
-    if (!roles?.length && !permissions?.length) return true;
+    if (!roles?.length && !permissions?.length && !anyPermissions?.length) return true;
 
     const request = context.switchToHttp().getRequest<Request & { user?: AuthenticatedUser }>();
     const user = request.user;
@@ -54,6 +59,13 @@ export class RbacGuard implements CanActivate {
       // granted or revoked in the portal takes effect without a deploy.
       const granted = await Promise.all(permissions.map((p) => this.roles.can(user.role, p)));
       if (!granted.every(Boolean)) {
+        throw AppException.forbidden("Your role does not permit that action.");
+      }
+    }
+
+    if (anyPermissions?.length) {
+      const granted = await Promise.all(anyPermissions.map((p) => this.roles.can(user.role, p)));
+      if (!granted.some(Boolean)) {
         throw AppException.forbidden("Your role does not permit that action.");
       }
     }

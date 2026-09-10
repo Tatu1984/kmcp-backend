@@ -9,6 +9,7 @@ import {
   CurrentUser,
   Public,
   RequestId,
+  RequireAnyPermission,
   RequirePermissions,
   type AuthenticatedUser,
 } from "@/common/decorators/auth.decorators";
@@ -65,7 +66,7 @@ export class PaymentsController {
 
   // Attendants collect at the kerb, so this sits on session.read rather than a
   // write grant. The amount is never taken from the caller.
-  @RequirePermissions("session.read")
+  @RequireAnyPermission("session.read", "session.read.own")
   @Post("collect")
   @ApiOperation({
     summary: "Collect payment for a session",
@@ -82,7 +83,7 @@ export class PaymentsController {
     return this.payments.collect(dto, user, { ...info, requestId });
   }
 
-  @RequirePermissions("session.read")
+  @RequireAnyPermission("session.read", "session.read.own")
   @Post(":id/verify")
   @ApiOperation({
     summary: "Confirm a completed checkout",

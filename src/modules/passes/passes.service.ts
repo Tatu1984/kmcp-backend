@@ -1,17 +1,21 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { PassStatus, Prisma } from "@prisma/client";
+import { PassStatus, PaymentMode, PaymentStatus, Prisma } from "@prisma/client";
 
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
 import { AuditService } from "@/common/services/audit.service";
 import { Paginated } from "@/common/interceptors/response.interceptor";
 import { orderBy, skipTake } from "@/common/dto/pagination.dto";
+import { generatePassCode } from "@/common/utils/plate.util";
+import { MeService } from "@/modules/me/me.service";
+import { RazorpayService } from "@/modules/payments/razorpay.service";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
 import type {
   CancelPassDto,
   CreatePassPlanDto,
   PassPlanQueryDto,
   PassQueryDto,
+  PurchasePassDto,
   UpdatePassPlanDto,
 } from "./dto/pass.dto";
 
@@ -57,6 +61,8 @@ export class PassesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly meService: MeService,
+    private readonly razorpay: RazorpayService,
   ) {}
 
   // ------------------------------------------------------------------ plans
@@ -358,5 +364,156 @@ export class PassesService {
     });
 
     return pass;
+  }
+
+  // ------------------------------------------------------------- citizen self-service
+
+  /** A citizen's own passes, newest first — the "My passes" screen. */
+  async myPasses(user: AuthenticatedUser) {
+    const passes = await this.prisma.pass.findMany({
+      where: { userId: user.id },
+      select: PASS_SELECT,
+      orderBy: { createdAt: "desc" },
+    });
+
+    return passes.map((pass) => this.shapeMyPass(pass));
+  }
+
+  private shapeMyPass(pass: {
+    id: string;
+    qrCode: string;
+    validFrom: Date;
+    validTo: Date;
+    status: PassStatus;
+    plan: { name: string };
+    vehicle: { plateNumber: string };
+  }) {
+    return {
+      id: pass.id,
+      planName: pass.plan.name,
+      plateNumber: pass.vehicle.plateNumber,
+      status: pass.status,
+      validFrom: pass.validFrom,
+      validTo: pass.validTo,
+      qrCode: pass.qrCode,
+    };
+  }
+
+  /**
+   * A citizen buying a pass for a vehicle they own (or are claiming).
+   *
+   * Creates the `Pass` in `PENDING_PAYMENT` and, for a priced plan, a Razorpay
+   * order plus the matching `Payment` row — the same "create pending, let the
+   * webhook confirm" shape every other payment in this system follows.
+   * `PaymentsService.handleWebhook()` is what flips the pass to `ACTIVE` once
+   * the gateway confirms capture; this method never does that itself. A
+   * zero-price plan has nothing for a gateway to confirm, so it activates the
+   * pass immediately instead.
+   */
+  async purchase(dto: PurchasePassDto, user: AuthenticatedUser, ctx: Ctx) {
+    const plan = await this.prisma.passPlan.findUnique({ where: { id: dto.planId } });
+    if (!plan) throw AppException.notFound("pass plan");
+    if (!plan.isActive) {
+      throw new AppException(
+        "VALIDATION_FAILED",
+        [{ field: "planId", issue: "plan is not on sale" }],
+        "That pass plan is no longer on sale.",
+      );
+    }
+
+    const vehicleType = await this.prisma.vehicleType.findUnique({
+      where: { id: plan.vehicleTypeId },
+      select: { code: true },
+    });
+    if (!vehicleType) throw AppException.notFound("vehicle type");
+
+    const vehicle = await this.meService.resolveOrClaimVehicle(
+      dto.plateNumber,
+      vehicleType.code,
+      user,
+      ctx,
+    );
+
+    if (vehicle.vehicleTypeId !== plan.vehicleTypeId) {
+      throw new AppException(
+        "VALIDATION_FAILED",
+        [{ field: "plateNumber", issue: "vehicle type does not match this plan" }],
+        "This vehicle's type does not match the plan you're buying.",
+      );
+    }
+
+    const qrCode = generatePassCode();
+    const now = new Date();
+
+    const pass = await this.prisma.pass.create({
+      data: {
+        userId: user.id,
+        vehicleId: vehicle.id,
+        planId: plan.id,
+        qrCode,
+        // Placeholder, non-null values. A priced plan leaves these alone until
+        // the webhook activates the pass with real dates; a free plan below
+        // overwrites them with the real validity window immediately.
+        validFrom: now,
+        validTo: now,
+        status: PassStatus.PENDING_PAYMENT,
+      },
+    });
+
+    await this.audit.record({
+      actor: user,
+      action: "PASS_PURCHASE_INITIATE",
+      entity: "Pass",
+      entityId: pass.id,
+      after: { planId: plan.id, vehicleId: vehicle.id, price: plan.price },
+      ...ctx,
+    });
+
+    if (plan.price === 0) {
+      const validTo = new Date(now.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
+      const activated = await this.prisma.pass.update({
+        where: { id: pass.id },
+        data: { status: PassStatus.ACTIVE, validFrom: now, validTo },
+      });
+
+      return this.shapeMyPass({
+        ...activated,
+        plan: { name: plan.name },
+        vehicle: { plateNumber: vehicle.plateNumber },
+      });
+    }
+
+    const order = await this.razorpay.createOrder(plan.price, pass.id, {
+      userId: user.id,
+      planId: plan.id,
+      purpose: "pass_purchase",
+    });
+
+    const payment = await this.prisma.payment.create({
+      data: {
+        sessionId: null,
+        passId: pass.id,
+        mode: PaymentMode.UPI_INTENT,
+        amount: plan.price,
+        status: PaymentStatus.PENDING,
+        idempotencyKey: `pass-${pass.id}`,
+        gateway: "razorpay",
+        gatewayOrderId: order.id,
+        paidByUserId: user.id,
+      },
+    });
+
+    return {
+      ...this.shapeMyPass({
+        ...pass,
+        plan: { name: plan.name },
+        vehicle: { plateNumber: vehicle.plateNumber },
+      }),
+      // The pass's own `id` above is not what a checkout confirms — the
+      // client calls `POST /payments/:id/verify` against this payment.
+      paymentId: payment.id,
+      gatewayKeyId: this.razorpay.keyId,
+      gatewayOrder: { id: order.id, amount: order.amount, currency: order.currency },
+    };
   }
 }

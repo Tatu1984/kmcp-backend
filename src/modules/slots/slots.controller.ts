@@ -6,6 +6,7 @@ import {
   ClientInfo,
   CurrentUser,
   RequestId,
+  RequireAnyPermission,
   RequirePermissions,
   type AuthenticatedUser,
 } from "@/common/decorators/auth.decorators";
@@ -29,14 +30,14 @@ import {
 export class SlotsController {
   constructor(private readonly slots: SlotsService) {}
 
-  @RequirePermissions("zone.read")
+  @RequireAnyPermission("zone.read", "zone.read.public")
   @Get()
   @ApiOperation({ summary: "Bays, filtered by zone, type or status" })
   list(@Query(zodPipe(SlotQuerySchema)) query: SlotQueryDto, @CurrentUser() user: AuthenticatedUser) {
     return this.slots.list(query, user);
   }
 
-  @RequirePermissions("zone.read")
+  @RequireAnyPermission("zone.read", "zone.read.public")
   @Get("summary/:zoneId")
   @ApiOperation({
     summary: "Bay counts for one zone",

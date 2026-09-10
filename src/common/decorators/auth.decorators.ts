@@ -7,6 +7,7 @@ import type { Permission, RoleCode } from "../rbac/permissions";
 export const IS_PUBLIC_KEY = "kmcp:isPublic";
 export const ROLES_KEY = "kmcp:roles";
 export const PERMISSIONS_KEY = "kmcp:permissions";
+export const ANY_PERMISSIONS_KEY = "kmcp:anyPermissions";
 export const SKIP_DEVICE_BINDING_KEY = "kmcp:skipDeviceBinding";
 
 /** No token required. Used by auth, webhooks, health and the public surface. */
@@ -18,6 +19,14 @@ export const Roles = (...roles: RoleCode[]) => SetMetadata(ROLES_KEY, roles);
 /** Restrict a route by permission — preferred over Roles, since RBAC is editable. */
 export const RequirePermissions = (...permissions: Permission[]) =>
   SetMetadata(PERMISSIONS_KEY, permissions);
+
+/**
+ * Restrict a route to callers holding at least one of these permissions — OR,
+ * not AND. Used where a staff permission and a citizen-scoped permission
+ * should both open the same route.
+ */
+export const RequireAnyPermission = (...permissions: Permission[]) =>
+  SetMetadata(ANY_PERMISSIONS_KEY, permissions);
 
 /** Allow an attendant to call this route from an unbound device (binding itself). */
 export const SkipDeviceBinding = () => SetMetadata(SKIP_DEVICE_BINDING_KEY, true);

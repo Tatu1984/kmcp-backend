@@ -15,6 +15,7 @@ import {
   type Permission,
 } from "../src/common/rbac/permissions";
 import {
+  ANY_PERMISSIONS_KEY,
   IS_PUBLIC_KEY,
   PERMISSIONS_KEY,
   ROLES_KEY,
@@ -49,6 +50,12 @@ interface DiscoveredRoute {
   readonly isPublic: boolean;
   readonly roles: string[];
   readonly permissions: Permission[];
+  /**
+   * `@RequireAnyPermission(...)` — satisfied by holding ANY one of these,
+   * unlike `permissions` above which requires ALL of them. Used where a staff
+   * permission and a citizen-scoped one should both open the same route.
+   */
+  readonly anyPermissions: Permission[];
 }
 
 const MODULES_DIR = path.resolve(__dirname, "../src/modules");
@@ -102,6 +109,8 @@ async function discover(): Promise<DiscoveredRoute[]> {
               isPublic: reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, targets) === true,
               roles: reflector.getAllAndOverride<string[]>(ROLES_KEY, targets) ?? [],
               permissions: reflector.getAllAndOverride<Permission[]>(PERMISSIONS_KEY, targets) ?? [],
+              anyPermissions:
+                reflector.getAllAndOverride<Permission[]>(ANY_PERMISSIONS_KEY, targets) ?? [],
             } satisfies DiscoveredRoute,
           ];
         });
@@ -122,9 +131,13 @@ let UNGUARDED: DiscoveredRoute[] = [];
 
 beforeAll(async () => {
   ROUTES = await discover();
-  PERMISSIONED = ROUTES.filter((r) => r.permissions.length > 0);
+  PERMISSIONED = ROUTES.filter((r) => r.permissions.length > 0 || r.anyPermissions.length > 0);
   UNGUARDED = ROUTES.filter(
-    (r) => !r.isPublic && r.roles.length === 0 && r.permissions.length === 0,
+    (r) =>
+      !r.isPublic &&
+      r.roles.length === 0 &&
+      r.permissions.length === 0 &&
+      r.anyPermissions.length === 0,
   );
 });
 
@@ -215,8 +228,11 @@ const SEEDED_ROLES = [
     code: "CITIZEN",
     isSuperuser: false,
     isZoneScoped: false,
-    // The public app holds no portal permission at all.
-    permissions: [] as Permission[],
+    // Granted by 20260906180000_citizen_permissions. The public app still
+    // holds no portal permission — these two open exactly six routes to a
+    // citizen's own data (see SELF_SERVICE_VIA_ANY_PERMISSION below) and
+    // nothing else in the API.
+    permissions: ["zone.read.public", "session.read.own"] as Permission[],
   },
 ] as const;
 
@@ -360,6 +376,40 @@ describe("every route says how it is guarded", () => {
     // requires — payment.read, pass.write, user.manage, report.generate — and
     // the delivery log is behind audit.read.
     "MessagingController.channels",
+
+    // --- a citizen's own things (MeController) ---
+    // Every method here is written `where: {..., ownerUserId/userId: user.id}`
+    // or reaches the row only through a plate/zone the caller just supplied
+    // in a body that is validated against that same ownership, exactly the
+    // row-set-is-the-authorisation reasoning NotificationsController above
+    // already relies on. A citizen with a valid token has no other account
+    // to touch through any of these.
+    "MeController.listVehicles",
+    "MeController.addVehicle",
+    "MeController.removeVehicle",
+    "MeController.listSessions",
+    "MeController.summary",
+    "MeController.listPayments",
+    "MeController.listFavourites",
+    "MeController.addFavourite",
+    "MeController.removeFavourite",
+
+    // --- a citizen's own wallet (WalletController) ---
+    // Balance and entries are read by `userId: user.id`; a top-up can only
+    // ever credit the caller's own wallet (`walletTopUpUserId: user.id`); a
+    // wallet payment is checked against `vehicle.ownerUserId` before it is
+    // allowed to touch a session at all, in `WalletService.payFromWallet`.
+    "WalletController.balance",
+    "WalletController.entries",
+    "WalletController.topUp",
+    "WalletController.payFromWallet",
+
+    // --- a citizen buying their own pass (MyPassesController) ---
+    // `myPasses` reads `userId: user.id`; `purchase` creates a pass FOR the
+    // caller against a vehicle `MeService.resolveOrClaimVehicle` refuses to
+    // hand over if it is already claimed by someone else.
+    "MyPassesController.myPasses",
+    "MyPassesController.purchase",
   ];
 
   it("carries a permission, a role or an explicit exemption", () => {
@@ -379,7 +429,9 @@ describe("every route says how it is guarded", () => {
   it("declares only permissions the catalogue knows how to enforce", () => {
     const catalogue = new Set<string>(PERMISSIONS);
     const unknown = ROUTES.flatMap((route) =>
-      route.permissions.filter((p) => !catalogue.has(p)).map((p) => `${route.id} → ${p}`),
+      [...route.permissions, ...route.anyPermissions]
+        .filter((p) => !catalogue.has(p))
+        .map((p) => `${route.id} → ${p}`),
     );
     // A typo here is silent: the string matches no grant, so the guard refuses
     // every role including the ones that were meant to have it.
@@ -409,7 +461,7 @@ describe("the permission catalogue", () => {
   });
 
   it("is enforced in full — no permission grants nothing", () => {
-    const declared = new Set(ROUTES.flatMap((r) => r.permissions));
+    const declared = new Set(ROUTES.flatMap((r) => [...r.permissions, ...r.anyPermissions]));
     // A permission no route ever requires is a checkbox in the portal that
     // changes nothing, which is worse than not offering it.
     expect(PERMISSIONS.filter((p) => !declared.has(p))).toEqual([]);
@@ -449,7 +501,10 @@ describe.each(SEEDED_ROLES)("$code", (role) => {
 
   /** What the seeded grants say the answer should be, before asking the guard. */
   const expected = (candidate: DiscoveredRoute) =>
-    role.isSuperuser || candidate.permissions.every((p) => granted.has(p));
+    role.isSuperuser ||
+    (candidate.permissions.every((p) => granted.has(p)) &&
+      (candidate.anyPermissions.length === 0 ||
+        candidate.anyPermissions.some((p) => granted.has(p))));
 
   async function actualVerdicts(): Promise<Map<DiscoveredRoute, boolean>> {
     const entries = await Promise.all(
@@ -550,14 +605,39 @@ describe("the shape of the matrix", () => {
     expect(decisions).toBeGreaterThan(1000);
   });
 
-  it("gives a citizen nothing in the portal", async () => {
+  /**
+   * The six routes `20260906180000_citizen_permissions` opened to a citizen
+   * — each one already scoped, at the service layer, to the caller's own
+   * data (see `ZonesService`/`SlotsService`/`TariffsService`, which need no
+   * extra scoping since they carry no account-specific data, and
+   * `PaymentsService.collect`, which checks `vehicle.ownerUserId` itself).
+   * A name appearing here without that service-layer check behind it is a
+   * bug, not a reason to add it — the citizen role's whole point is that it
+   * cannot reach anyone's data but its own.
+   */
+  const CITIZEN_SELF_SERVICE_VIA_ANY_PERMISSION = [
+    "ZonesController.findOne",
+    "SlotsController.list",
+    "SlotsController.summary",
+    "TariffsController.applicable",
+    "PaymentsController.collect",
+    "PaymentsController.verify",
+  ];
+
+  it("gives a citizen exactly its scoped self-service routes, nothing else in the portal", async () => {
     const guard = new RbacGuard(new Reflector(), seededRolesService());
     const results = await Promise.all(
-      PERMISSIONED.map((r) => verdict(guard, r, principal("CITIZEN"))),
+      PERMISSIONED.map(async (r) => [r, await verdict(guard, r, principal("CITIZEN"))] as const),
     );
     // The strongest single statement this file makes: the public app's role
-    // cannot call one permissioned route in the entire API.
-    expect(results.filter(Boolean)).toEqual([]);
+    // cannot call one permissioned route in the entire API beyond these six,
+    // each individually justified above.
+    expect(
+      results
+        .filter(([, ok]) => ok)
+        .map(([r]) => r.id)
+        .sort(),
+    ).toEqual([...CITIZEN_SELF_SERVICE_VIA_ANY_PERMISSION].sort());
   });
 
   it("gives a super admin everything", async () => {
@@ -639,14 +719,16 @@ describe("what GET /auth/me tells the caller", () => {
     expect(me.permissions).toHaveLength(7);
   });
 
-  it("gives a citizen an empty list, and an empty list is not a missing field", async () => {
+  it("gives a citizen exactly its two scoped grants, not a missing field", async () => {
     const { service, user } = makeAuthService("CITIZEN");
     const me = await service.me(user);
 
-    // The distinction the front end depends on: `[]` means "you may do nothing
-    // in the portal", `undefined` would mean "this API did not tell you", and a
-    // client that treats them alike is one deploy away from either extreme.
-    expect(me.permissions).toEqual([]);
+    // Not `[]` any more — 20260906180000_citizen_permissions granted exactly
+    // two scoped permissions. The distinction the front end still depends on:
+    // a real (if short) list means "this API told you", `undefined` would mean
+    // "this API did not tell you", and a client that treats them alike is one
+    // deploy away from either extreme.
+    expect(me.permissions).toEqual(["session.read.own", "zone.read.public"]);
     expect(me).toHaveProperty("permissions");
     expect(me.permissions).not.toBeUndefined();
     expect(Array.isArray(me.permissions)).toBe(true);

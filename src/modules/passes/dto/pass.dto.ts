@@ -45,3 +45,9 @@ export const CancelPassSchema = z.object({
   reason: z.string().trim().min(4, "A cancellation needs a reason").max(500),
 });
 export type CancelPassDto = z.infer<typeof CancelPassSchema>;
+
+export const PurchasePassSchema = z.object({
+  planId: z.string().min(1),
+  plateNumber: z.string().trim().min(1),
+});
+export type PurchasePassDto = z.infer<typeof PurchasePassSchema>;

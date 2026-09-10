@@ -7,6 +7,7 @@ import {
   ClientInfo,
   CurrentUser,
   RequestId,
+  RequireAnyPermission,
   RequirePermissions,
   type AuthenticatedUser,
 } from "@/common/decorators/auth.decorators";
@@ -52,7 +53,7 @@ export class TariffsController {
   // reads, and an attendant is not a tariff administrator. It was gated behind
   // a permission attendants do not hold, which made the vendor app unable to
   // fetch the very rate card this endpoint exists to give it.
-  @RequirePermissions("session.read")
+  @RequireAnyPermission("session.read", "session.read.own")
   @Get("tariffs/applicable")
   @ApiOperation({
     summary: "The rate that applies to a zone and vehicle type right now",

@@ -6,6 +6,7 @@ import { zodPipe } from "@/common/pipes/zod-validation.pipe";
 import {
   ClientInfo,
   CurrentUser,
+  Public,
   RequestId,
   RequirePermissions,
   type AuthenticatedUser,
@@ -16,11 +17,13 @@ import {
   CreatePassPlanSchema,
   PassPlanQuerySchema,
   PassQuerySchema,
+  PurchasePassSchema,
   UpdatePassPlanSchema,
   type CancelPassDto,
   type CreatePassPlanDto,
   type PassPlanQueryDto,
   type PassQueryDto,
+  type PurchasePassDto,
   type UpdatePassPlanDto,
 } from "./dto/pass.dto";
 
@@ -33,14 +36,17 @@ const PlanStatusSchema = z.object({ isActive: z.boolean() });
 export class PassPlansController {
   constructor(private readonly passes: PassesService) {}
 
-  @RequirePermissions("tariff.read")
+  // Pricing information, like a rate card — a citizen must be able to see
+  // what a pass costs before they've necessarily signed in, the same
+  // reasoning that already makes `/zones/nearby` public.
+  @Public()
   @Get()
   @ApiOperation({ summary: "Pass plans, with the count of passes live against each" })
   list(@Query(zodPipe(PassPlanQuerySchema)) query: PassPlanQueryDto) {
     return this.passes.listPlans(query);
   }
 
-  @RequirePermissions("tariff.read")
+  @Public()
   @Get(":id")
   @ApiOperation({ summary: "One plan" })
   findOne(@Param("id") id: string) {
@@ -137,5 +143,40 @@ export class PassesController {
     @RequestId() requestId: string,
   ) {
     return this.passes.cancelPass(id, dto, user, { ...info, requestId });
+  }
+}
+
+/**
+ * A citizen's own passes.
+ *
+ * No `@RequirePermissions` anywhere in this file, deliberately — same
+ * reasoning as `MeController`: a citizen buying or viewing their own pass
+ * needs nothing beyond a valid token.
+ */
+@ApiTags("My passes")
+@ApiBearerAuth("bearer")
+@Controller("me/passes")
+export class MyPassesController {
+  constructor(private readonly passes: PassesService) {}
+
+  @Get()
+  @ApiOperation({ summary: "Passes this citizen holds" })
+  myPasses(@CurrentUser() user: AuthenticatedUser) {
+    return this.passes.myPasses(user);
+  }
+
+  @Post()
+  @ApiOperation({
+    summary: "Buy a pass",
+    description:
+      "Resolves or claims the vehicle by plate, then either activates a free pass immediately or opens a Razorpay order for the citizen to pay.",
+  })
+  purchase(
+    @Body(zodPipe(PurchasePassSchema)) dto: PurchasePassDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() info: { ip?: string },
+    @RequestId() requestId: string,
+  ) {
+    return this.passes.purchase(dto, user, { ...info, requestId });
   }
 }

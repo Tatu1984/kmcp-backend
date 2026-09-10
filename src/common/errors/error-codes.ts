@@ -37,6 +37,7 @@ export const ERROR_CODES = {
   PAYMENT_NOT_CONFIRMED: { status: 422, message: "Payment has not been confirmed yet." },
   KYC_INCOMPLETE: { status: 422, message: "Verify the vendor's KYC documents first." },
   LEDGER_UNBALANCED: { status: 422, message: "The settlement ledger does not balance." },
+  INSUFFICIENT_BALANCE: { status: 422, message: "Wallet balance is not enough for this." },
 
   CLIENT_UPGRADE_REQUIRED: { status: 426, message: "Please update the app to continue." },
   RATE_LIMITED: { status: 429, message: "Too many requests. Please wait a moment." },

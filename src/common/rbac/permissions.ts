@@ -21,8 +21,8 @@ export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
 export type RoleCode = string;
 
 export const PERMISSIONS = [
-  "zone.read", "zone.write", "zone.status", "slot.write", "camera.view", "camera.manage",
-  "session.read", "session.cancel", "incident.manage",
+  "zone.read", "zone.read.public", "zone.write", "zone.status", "slot.write", "camera.view", "camera.manage",
+  "session.read", "session.read.own", "session.cancel", "incident.manage",
   "vendor.read", "vendor.write", "vendor.approve", "attendant.write", "shift.verify",
   "attendant.pay.read", "attendant.pay.write",
   "tariff.read", "tariff.write", "tariff.publish", "discount.write", "pass.write",
@@ -121,6 +121,14 @@ export const PERMISSION_GROUPS: {
       { key: "user.manage", label: "Manage users" },
       { key: "cms.write", label: "Edit public content" },
       { key: "config.write", label: "Change system configuration" },
+    ],
+  },
+  {
+    key: "citizen",
+    label: "Citizen self-service",
+    permissions: [
+      { key: "zone.read.public", label: "View zones (public)" },
+      { key: "session.read.own", label: "View & pay for own sessions" },
     ],
   },
 ];

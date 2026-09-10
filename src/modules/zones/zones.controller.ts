@@ -7,6 +7,7 @@ import {
   CurrentUser,
   Public,
   RequestId,
+  RequireAnyPermission,
   RequirePermissions,
   type AuthenticatedUser,
 } from "@/common/decorators/auth.decorators";
@@ -76,7 +77,7 @@ export class ZonesController {
     return this.zones.list(query, user);
   }
 
-  @RequirePermissions("zone.read")
+  @RequireAnyPermission("zone.read", "zone.read.public")
   @Get(":id")
   @ApiOperation({ summary: "One zone with its vendor, slot counts and occupancy" })
   findOne(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {

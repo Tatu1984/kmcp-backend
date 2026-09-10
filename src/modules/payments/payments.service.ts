@@ -1,6 +1,13 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
-import { PaymentMode, PaymentStatus, Prisma, SessionStatus } from "@prisma/client";
+import {
+  PassStatus,
+  PaymentMode,
+  PaymentStatus,
+  Prisma,
+  SessionStatus,
+  WalletEntryKind,
+} from "@prisma/client";
 
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
@@ -89,8 +96,16 @@ export class PaymentsService {
    * followed by the rest on UPI settles correctly, and a second full payment
    * for the same session is refused rather than silently taken.
    */
-  private async outstanding(sessionId: string): Promise<{
-    session: { id: string; code: string; status: SessionStatus; payableAmount: number | null; shiftId: string | null; attendantId: string | null };
+  async outstanding(sessionId: string): Promise<{
+    session: {
+      id: string;
+      code: string;
+      status: SessionStatus;
+      payableAmount: number | null;
+      shiftId: string | null;
+      attendantId: string | null;
+      vehicle: { ownerUserId: string | null };
+    };
     owed: number;
     captured: number;
   }> {
@@ -103,6 +118,7 @@ export class PaymentsService {
         payableAmount: true,
         shiftId: true,
         attendantId: true,
+        vehicle: { select: { ownerUserId: true } },
       },
     });
     if (!session) throw AppException.notFound("session");
@@ -154,6 +170,23 @@ export class PaymentsService {
         [{ field: "sessionId", issue: "already paid in full" }],
         `${session.code} has already been paid. Nothing further is owed.`,
       );
+    }
+
+    // A citizen calling this from the app may only settle their own vehicle's
+    // session — the route-level guard only checks that they may call
+    // /payments/collect at all, not whose session this is. Ownership is not
+    // reached through a column on the session; it goes through
+    // `vehicle.ownerUserId`, matching how the rest of this codebase scopes a
+    // citizen to their own vehicles.
+    if (user.role === SYSTEM_ROLES.CITIZEN) {
+      if (session.vehicle.ownerUserId !== user.id) {
+        throw AppException.forbidden("You can only pay for your own parking.");
+      }
+      if (dto.mode === PaymentMode.CASH) {
+        throw new AppException("VALIDATION_FAILED", [
+          { field: "mode", issue: "cash cannot be collected through the app" },
+        ]);
+      }
     }
 
     if (dto.mode === PaymentMode.CASH) {
@@ -216,7 +249,7 @@ export class PaymentsService {
         gateway: "razorpay",
         gatewayOrderId: order.id,
         collectedByAttendantId: user.attendantId ?? session.attendantId,
-        paidByUserId: dto.paidByUserId,
+        paidByUserId: user.role === SYSTEM_ROLES.CITIZEN ? user.id : dto.paidByUserId,
       },
       select: PAYMENT_SELECT,
     });
@@ -351,7 +384,14 @@ export class PaymentsService {
 
     const payment = await this.prisma.payment.findFirst({
       where: { gatewayOrderId: orderId },
-      select: { id: true, status: true, amount: true },
+      select: {
+        id: true,
+        status: true,
+        amount: true,
+        mode: true,
+        passId: true,
+        walletTopUpUserId: true,
+      },
     });
     if (!payment) {
       // Not an error: the account may be shared, and events for other systems
@@ -361,6 +401,16 @@ export class PaymentsService {
     }
 
     if (type === "payment.captured") {
+      // A replay must short-circuit before doing anything at all, including
+      // the wallet credit and pass activation below — those are consequences
+      // of a capture, and must run exactly once. `capture()` itself is
+      // idempotent on `Payment.status`, but it knows nothing about these side
+      // effects, so the check is duplicated here against the status read
+      // *before* `capture()` runs.
+      if (payment.status === PaymentStatus.CAPTURED) {
+        return { handled: true, event: type, paymentId: payment.id, replayed: true };
+      }
+
       const paidAmount = Number(entity.amount ?? 0);
       if (paidAmount !== payment.amount) {
         // Never silently accept a different figure. Someone paying ₹1 against a
@@ -376,6 +426,46 @@ export class PaymentsService {
       }
 
       await this.capture(payment.id, paymentId, true);
+
+      // Credit the citizen's wallet if this gateway payment was a top-up.
+      if (payment.walletTopUpUserId) {
+        const agg = await this.prisma.walletEntry.aggregate({
+          where: { userId: payment.walletTopUpUserId },
+          _sum: { amount: true },
+        });
+        const currentBalance = agg._sum.amount ?? 0;
+
+        await this.prisma.walletEntry.create({
+          data: {
+            userId: payment.walletTopUpUserId,
+            kind: WalletEntryKind.TOPUP,
+            amount: payment.amount,
+            balanceAfter: currentBalance + payment.amount,
+            description: `Added by ${payment.mode}`,
+            sessionId: null,
+            zoneId: null,
+          },
+        });
+      }
+
+      // Activate the pass this gateway payment was purchasing.
+      if (payment.passId) {
+        const pass = await this.prisma.pass.findUnique({
+          where: { id: payment.passId },
+          select: { id: true, plan: { select: { durationDays: true } } },
+        });
+        if (pass) {
+          await this.prisma.pass.update({
+            where: { id: payment.passId },
+            data: {
+              status: PassStatus.ACTIVE,
+              validFrom: new Date(),
+              validTo: new Date(Date.now() + pass.plan.durationDays * 24 * 60 * 60 * 1000),
+            },
+          });
+        }
+      }
+
       await this.audit.record({
         actor: null,
         action: "PAYMENT_CAPTURED",

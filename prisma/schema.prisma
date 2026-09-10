@@ -84,6 +84,18 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
+/// The kind of movement a WalletEntry records. TOPUP and REFUND credit the
+/// wallet; SESSION_DEBIT debits it for a parking session paid from the
+/// wallet; REVERSAL undoes a prior entry (e.g. a failed debit that must be
+/// put back); ADJUSTMENT is an operator-initiated correction.
+enum WalletEntryKind {
+  TOPUP
+  SESSION_DEBIT
+  REFUND
+  REVERSAL
+  ADJUSTMENT
+}
+
 enum ShiftStatus {
   OPEN
   CLOSED
@@ -282,6 +294,8 @@ model User {
   favourites    Favourite[]
   feedback      Feedback[]
   notifications Notification[]
+  walletEntries WalletEntry[]
+  walletTopUps  Payment[]      @relation("PaymentWalletTopUp")
 
   @@index([role, status])
   @@index([phone])
@@ -425,12 +439,13 @@ model Zone {
   createdAt             DateTime   @default(now())
   updatedAt             DateTime   @updatedAt
 
-  slots       Slot[]
-  tariffs     Tariff[]
-  sessions    ParkingSession[]
-  vendorZones VendorZone[]
-  shifts      Shift[]
-  favourites  Favourite[]
+  slots         Slot[]
+  tariffs       Tariff[]
+  sessions      ParkingSession[]
+  vendorZones   VendorZone[]
+  shifts        Shift[]
+  favourites    Favourite[]
+  walletEntries WalletEntry[]
 
   @@index([status])
   @@index([wardId])
@@ -623,7 +638,9 @@ model Media {
   bucket       String
   mimeType     String
   sizeBytes    Int
-  /** The name the uploader's file had on their own machine, not the object key. */
+  /**
+   * The name the uploader's file had on their own machine, not the object key.
+   */
   fileName     String?
   sha256       String?
   purpose      MediaPurpose
@@ -661,6 +678,11 @@ model Payment {
   paidAt                 DateTime?
   refundedAmount         Int             @default(0)
   failureReason          String?
+  /// Set when this captured gateway payment is a citizen topping up their
+  /// wallet rather than paying for a session or pass. WalletService credits
+  /// the named user's wallet once this payment reaches CAPTURED.
+  walletTopUpUserId      String?
+  walletTopUpUser        User?           @relation("PaymentWalletTopUp", fields: [walletTopUpUserId], references: [id])
   createdAt              DateTime        @default(now())
 
   receipt         Receipt?
@@ -680,6 +702,37 @@ model Receipt {
   pdfMediaId   String?
   issuedAt     DateTime @default(now())
   sentChannels String[] // sms, whatsapp, email
+}
+
+/// A citizen's wallet ledger, one row per movement.
+///
+/// Deliberately not a mutable stored balance. Same philosophy as this
+/// codebase's shift/settlement reconciliation: a balance kept as a column
+/// can drift from reality the moment a write is missed or double-applied,
+/// and nobody could tell without replaying every session. The current
+/// balance is always the sum of a user's entries; `balanceAfter` is stored
+/// per row purely so displaying history doesn't require re-summing on every
+/// read — only the *current* balance is re-derived by summing.
+model WalletEntry {
+  id           String          @id @default(cuid())
+  userId       String
+  user         User            @relation(fields: [userId], references: [id])
+  kind         WalletEntryKind
+  /// Paise. Signed — credits (TOPUP, REFUND) are positive, debits
+  /// (SESSION_DEBIT) are negative.
+  amount       Int
+  /// Paise. The user's running balance immediately after this entry,
+  /// computed and stored at write time.
+  balanceAfter Int
+  description  String
+  /// The session this entry relates to, e.g. a SESSION_DEBIT paid from the
+  /// wallet. Not modelled as a relation — display only ever needs the id.
+  sessionId    String?
+  zoneId       String?
+  zone         Zone?           @relation(fields: [zoneId], references: [id])
+  createdAt    DateTime        @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model Shift {
