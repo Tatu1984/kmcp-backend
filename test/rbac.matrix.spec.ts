@@ -160,10 +160,10 @@ function route(id: string): DiscoveredRoute {
  * real table whenever a `DATABASE_URL` is present, so the copy cannot drift
  * unnoticed.
  *
- * Later migrations amend those rows and must be reflected here too — the
- * camera grants on ADMIN, and `attendant.pay.*` on VENDOR, both arrived that
- * way. The conformance test is the only thing that catches a missed one, and
- * it only runs where there is a database to read.
+ * Later migrations amend those rows and must be reflected here too —
+ * `attendant.pay.*` on VENDOR arrived that way. The conformance test is the
+ * only thing that catches a missed one, and it only runs where there is a
+ * database to read.
  */
 const SEEDED_ROLES = [
   {
@@ -179,7 +179,6 @@ const SEEDED_ROLES = [
     isZoneScoped: false,
     permissions: [
       "zone.read", "zone.write", "zone.status", "slot.write",
-      "camera.view", "camera.manage",
       "session.read", "session.cancel", "incident.manage",
       "vendor.read", "vendor.write", "vendor.approve", "attendant.write", "shift.verify",
       "tariff.read", "tariff.write", "tariff.publish", "discount.write", "pass.write",

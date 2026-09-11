@@ -21,7 +21,7 @@ export type SystemRole = (typeof SYSTEM_ROLES)[keyof typeof SYSTEM_ROLES];
 export type RoleCode = string;
 
 export const PERMISSIONS = [
-  "zone.read", "zone.read.public", "zone.write", "zone.status", "slot.write", "camera.view", "camera.manage",
+  "zone.read", "zone.read.public", "zone.write", "zone.status", "slot.write",
   "session.read", "session.read.own", "session.cancel", "incident.manage",
   "vendor.read", "vendor.write", "vendor.approve", "attendant.write", "shift.verify",
   "attendant.pay.read", "attendant.pay.write",
@@ -62,12 +62,6 @@ export const PERMISSION_GROUPS: {
       { key: "zone.write", label: "Create & edit zones" },
       { key: "zone.status", label: "Open / close zones" },
       { key: "slot.write", label: "Manage slots" },
-      // Sight of a live street is its own grant, separate from managing the
-      // hardware, and separate again from anything to do with zones. Held by
-      // the authority only until somebody decides an officer or an operator
-      // should have it.
-      { key: "camera.view", label: "View camera streams" },
-      { key: "camera.manage", label: "Add & edit cameras" },
       { key: "session.read", label: "View parking sessions" },
       { key: "session.cancel", label: "Cancel a session" },
       { key: "incident.manage", label: "Manage incidents" },

@@ -23,7 +23,6 @@ import { AuditModule } from "./modules/audit/audit.module";
 import { GeographyModule } from "./modules/geography/geography.module";
 import { VehicleTypesModule } from "./modules/vehicle-types/vehicle-types.module";
 import { SlotsModule } from "./modules/slots/slots.module";
-import { CamerasModule } from "./modules/cameras/cameras.module";
 import { AttendantsModule } from "./modules/attendants/attendants.module";
 import { AttendantPaymentsModule } from "./modules/attendant-payments/attendant-payments.module";
 import { UsersModule } from "./modules/users/users.module";
@@ -77,7 +76,6 @@ import { CronModule } from "./modules/cron/cron.module";
     GeographyModule,
     VehicleTypesModule,
     SlotsModule,
-    CamerasModule,
     AttendantsModule,
     AttendantPaymentsModule,
     UsersModule,
