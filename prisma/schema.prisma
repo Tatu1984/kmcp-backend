@@ -1311,3 +1311,38 @@ model AttendantPayment {
   @@index([attendantId, paidAt])
 }
 
+/**
+ * A live CCTV camera whose HLS the Edge Agent pushes to this API.
+ *
+ * The picture reaches us the way the live-feed portal proved out: an on-site
+ * Edge Agent pulls RTSP from the camera and HTTP-PUTs the HLS playlist and
+ * segments to `/api/edge/ingest/<ingestKey>/<file>`, authenticating with a
+ * per-camera bearer token. The bytes land in object storage (R2) and a browser
+ * plays them back through this API, gated to administrators.
+ *
+ * What is deliberately not here — the same discipline the old model kept:
+ * no RTSP URL and no camera credentials. Those live in the Edge Agent on the
+ * operator's own network, never in this database. A camera password in a table
+ * is a camera password in every backup. All we hold is a name and the ingest
+ * key/token that route and authenticate one camera's upload.
+ *
+ * No status column either: liveness is read from the current HLS playlist in
+ * storage at the moment it is asked for, not written on a heartbeat.
+ */
+model Camera {
+  id              String   @id @default(cuid())
+  /// What an operator calls this camera. Free text.
+  name            String
+  /// Optional grouping label for the wall (e.g. a building or gate). `grp`
+  /// rather than `group`, which is reserved in SQL.
+  grp             String?
+  /// Unique, unguessable segment in the public ingest/playback URL path.
+  ingestKey       String   @unique
+  /// SHA-256 of the one-time ingest token. The token itself is shown once, on
+  /// creation, and never stored in the clear.
+  ingestTokenHash String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([ingestKey])
+}

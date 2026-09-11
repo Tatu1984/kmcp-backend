@@ -27,6 +27,27 @@ const schema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   MEDIA_SIGNED_URL_TTL: z.coerce.number().default(900),
 
+  /**
+   * Live-camera HLS storage (the push→R2 pipeline). The Edge Agent PUTs HLS to
+   * this API; the bytes are kept in object storage and played back to admins.
+   *
+   * `MEDIA_BACKEND` selects where: `r2`/`s3` reuse the S3_* configuration above
+   * (R2), `fs` writes to a local directory for development only (never Vercel,
+   * whose filesystem is ephemeral). HLS objects live under `HLS_KEY_PREFIX` so
+   * they sit apart from evidence and documents in the same bucket.
+   *
+   * `HLS_PUBLIC_BASE` is deliberately optional and normally UNSET: a public CDN
+   * URL would let anyone with the address watch a street, bypassing the admin
+   * gate. Left unset, every playback is streamed through this API behind that
+   * gate. `R2_TIMEOUT_MS` makes a misconfigured bucket fail fast rather than
+   * hanging a serverless function.
+   */
+  MEDIA_BACKEND: z.enum(["r2", "s3", "fs"]).default("r2"),
+  HLS_KEY_PREFIX: z.string().default("hls"),
+  HLS_PUBLIC_BASE: z.string().url().optional(),
+  R2_TIMEOUT_MS: z.coerce.number().default(4000),
+  MEDIA_FS_DIR: z.string().optional(),
+
   RAZORPAY_KEY_ID: z.string().optional(),
   RAZORPAY_KEY_SECRET: z.string().optional(),
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),

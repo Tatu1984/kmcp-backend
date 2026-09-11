@@ -6,6 +6,7 @@ import { ConfigService } from "@nestjs/config";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
 import compression from "compression";
+import express from "express";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 
 import { AppModule } from "./app.module";
@@ -25,7 +26,10 @@ export async function createApp(): Promise<NestExpressApplication> {
   const config = app.get(ConfigService<Env, true>);
   const prefix = config.get("API_PREFIX", { infer: true });
 
-  app.setGlobalPrefix(prefix);
+  // The camera ingest/playback routes are mounted at exactly `/api/edge/ingest/*`
+  // — outside the versioned prefix — so the live-feed Edge Agent publishes to the
+  // same path it already uses, unchanged.
+  app.setGlobalPrefix(prefix, { exclude: ["api/edge/ingest/{*path}"] });
   app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
   app.use(compression());
   app.set("trust proxy", 1);
@@ -51,6 +55,19 @@ export async function createApp(): Promise<NestExpressApplication> {
       req.rawBody = buf;
     },
   });
+
+  // HLS ingest is binary: the Edge Agent PUTs .m3u8 playlists and .ts segments,
+  // not JSON. Capture the exact bytes as a Buffer on req.body for the ingest
+  // path only, so the ingest controller can hand them straight to storage. A
+  // generous limit — a segment is a couple of seconds of video, a few MB at most.
+  const rawIngest = express.raw({ type: () => true, limit: "20mb" });
+  app.use(
+    "/api/edge/ingest",
+    (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      if (req.method === "PUT" || req.method === "POST") return rawIngest(req, res, next);
+      return next();
+    },
+  );
 
   if (config.get("SWAGGER_ENABLED", { infer: true })) {
     const document = SwaggerModule.createDocument(
