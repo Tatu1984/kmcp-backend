@@ -9,6 +9,7 @@ import {
   Res,
 } from "@nestjs/common";
 import { ApiExcludeController } from "@nestjs/swagger";
+import { SkipThrottle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 
 import { Public, Roles } from "@/common/decorators/auth.decorators";
@@ -34,8 +35,19 @@ import { safeKey, safeName, contentTypeFor, cacheControlFor } from "./media/stor
  *
  * Playback: gated to administrators. Because cameras are an organisation asset
  * (not per-user owned), any admin may watch any camera; a non-admin cannot.
+ *
+ * These routes are @SkipThrottle: they are the live-video plane, not a user
+ * action. A single camera PUTs a segment and rewrites its playlist about every
+ * two seconds (~60 requests/min), and a browser fetches a segment about every
+ * two seconds per open tile. The global rate limiter counts by client IP and
+ * does NOT honour @Public(), so without this a couple of cameras — or one admin
+ * watching a few tiles — behind a single site IP would exhaust the 120/min
+ * budget and start getting 429s on the uploads and segment fetches themselves,
+ * breaking ingest and playback. Auth here is the per-camera token (upload) and
+ * the admin JWT (playback), which is the real abuse control.
  */
 @ApiExcludeController()
+@SkipThrottle()
 @Controller("api/edge/ingest")
 export class IngestController {
   constructor(private readonly cameras: CamerasService) {}
@@ -43,6 +55,34 @@ export class IngestController {
   private bearer(req: Request): string | null {
     const h = req.headers.authorization || "";
     return h.startsWith("Bearer ") ? h.slice(7) : null;
+  }
+
+  /**
+   * The exact uploaded bytes as a Buffer.
+   *
+   * Normally the raw body parser in main.ts has already left a Buffer on
+   * req.body. But on a serverless host the app.use mount is not guaranteed to
+   * have run for this request, in which case req.body is undefined and the
+   * stream is still unread — so fall back to draining it here. This makes the
+   * PUT robust regardless of whether the middleware fired.
+   */
+  private async readBody(req: Request): Promise<Buffer | null> {
+    if (Buffer.isBuffer(req.body)) return req.body.length > 0 ? req.body : null;
+
+    // req.body was not populated by the parser — read the raw stream ourselves.
+    // If the body was already consumed (readableEnded) and left nothing, treat
+    // it as empty rather than hanging.
+    if (req.readableEnded) return null;
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const buf = Buffer.concat(chunks);
+      return buf.length > 0 ? buf : null;
+    } catch {
+      return null;
+    }
   }
 
   private async write(req: Request, ingestKey: string, path: string, res: Response) {
@@ -53,11 +93,8 @@ export class IngestController {
     const cam = await this.cameras.authenticateIngest(key, this.bearer(req));
     if (!cam) return res.status(401).json({ error: "unauthorized" });
 
-    // The raw body parser (see main.ts) leaves the exact bytes on req.body.
-    const body = req.body as Buffer | undefined;
-    if (!body || !Buffer.isBuffer(body)) {
-      return res.status(400).json({ error: "empty body" });
-    }
+    const body = await this.readBody(req);
+    if (!body) return res.status(400).json({ error: "empty body" });
 
     const result = await this.cameras.putMedia(key, file, new Uint8Array(body));
     if (!result.ok) return res.status(500).json({ error: result.error || "write failed" });

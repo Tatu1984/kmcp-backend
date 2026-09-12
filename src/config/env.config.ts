@@ -117,6 +117,23 @@ const schema = z.object({
     .string()
     .default("true")
     .transform((v) => v !== "false"),
+}).superRefine((env, ctx) => {
+  // MEDIA_BACKEND defaults to "r2", and the R2/S3 media store throws at request
+  // time if its credentials are absent — which would let a deploy boot green and
+  // then silently report every camera OFFLINE (and 500 on ingest). Require the
+  // credentials up front when an object-storage backend is selected, so a bad
+  // deploy fails at startup with a message that names the missing variable.
+  if (env.MEDIA_BACKEND === "r2" || env.MEDIA_BACKEND === "s3") {
+    for (const key of ["S3_ENDPOINT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const) {
+      if (!env[key]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `${key} is required when MEDIA_BACKEND is "${env.MEDIA_BACKEND}"`,
+        });
+      }
+    }
+  }
 });
 
 export type Env = z.infer<typeof schema>;

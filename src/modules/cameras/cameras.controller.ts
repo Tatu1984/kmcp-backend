@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Req } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { SkipThrottle } from "@nestjs/throttler";
 import type { Request } from "express";
 
 import { zodPipe } from "@/common/pipes/zod-validation.pipe";
@@ -32,6 +33,11 @@ export class CamerasController {
     return host ? `${proto}://${host}` : "";
   }
 
+  // The wall polls this every several seconds for live status, so it is exempt
+  // from the rate limiter — it would otherwise share the per-IP budget with the
+  // admin's own playback traffic and tip the dashboard into 429s. It stays
+  // admin-gated (@Roles above); the write routes below keep normal throttling.
+  @SkipThrottle()
   @Get()
   @ApiOperation({ summary: "Every camera, with live status" })
   list(@Req() req: Request) {
