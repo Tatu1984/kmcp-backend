@@ -90,7 +90,16 @@ export function cacheControlFor(kind: ContentKind): string {
 
 let singleton: MediaStore | null = null;
 
-/** Resolve the configured media store (cached for the process). */
+/**
+ * Resolve the configured media store (cached for the process).
+ *
+ * The filesystem backend is refused on a serverless host. Vercel's filesystem
+ * is read-only apart from /tmp and is discarded between invocations, so an
+ * accidental `fs` selection there does not "degrade" — it fails every upload
+ * instantly with an unhelpful write error, which is precisely the symptom that
+ * a misspelt or unset MEDIA_BACKEND produced. Naming the cause here turns a
+ * confusing 500 into a message that says what to set.
+ */
 export async function getMediaStore(): Promise<MediaStore> {
   if (singleton) return singleton;
   // trim() so a stray space in the env value (e.g. "r2 ") can't silently fall
@@ -100,6 +109,13 @@ export async function getMediaStore(): Promise<MediaStore> {
     const { R2Store } = await import("./r2");
     singleton = new R2Store();
   } else {
+    if (process.env.VERCEL) {
+      throw new Error(
+        `MEDIA_BACKEND is "${process.env.MEDIA_BACKEND ?? "(unset)"}" — the filesystem ` +
+          "backend cannot be used on Vercel (its filesystem is ephemeral and read-only). " +
+          'Set MEDIA_BACKEND=r2 and the S3_* credentials.',
+      );
+    }
     const { FsStore } = await import("./fs");
     singleton = new FsStore();
   }

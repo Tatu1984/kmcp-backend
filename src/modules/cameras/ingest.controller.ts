@@ -47,7 +47,10 @@ import { safeKey, safeName, contentTypeFor, cacheControlFor } from "./media/stor
  * the admin JWT (playback), which is the real abuse control.
  */
 @ApiExcludeController()
-@SkipThrottle()
+// Every NAMED throttler must be listed. A bare @SkipThrottle() defaults to
+// `{ default: true }`, which skips only the throttler called "default" — the
+// "strict" one (10/min) stayed armed and 429'd the segment uploads at ~60/min.
+@SkipThrottle({ default: true, strict: true })
 @Controller("api/edge/ingest")
 export class IngestController {
   constructor(private readonly cameras: CamerasService) {}

@@ -146,26 +146,60 @@ export class CamerasService {
     return !!cam;
   }
 
-  /** Store one uploaded HLS file. `file` is validated by the caller too. */
+  /**
+   * Store one uploaded HLS file. `file` is validated by the caller too.
+   *
+   * Failures are logged with the reason. An upload that fails silently behind a
+   * bare 500 is close to undiagnosable in a serverless log, and this is the hot
+   * path every camera depends on — a misconfigured bucket or backend must say so.
+   */
   async putMedia(ingestKey: string, file: string, body: Uint8Array) {
     const name = safeName(file);
     if (!name) return { ok: false, error: "bad file name" };
-    const store = await getMediaStore();
-    return store.put(ingestKey, name, body);
+    try {
+      const store = await getMediaStore();
+      const result = await store.put(ingestKey, name, body);
+      if (!result.ok) {
+        this.logger.error(
+          `ingest put failed: camera=${ingestKey} file=${name} bytes=${body.byteLength} ` +
+            `backend=${store.name} error=${result.error ?? "unknown"}`,
+        );
+      }
+      return result;
+    } catch (e) {
+      // getMediaStore() throws when the backend is misconfigured (missing S3_*
+      // credentials, or fs selected on Vercel). Report it instead of letting an
+      // opaque 500 escape.
+      const error = e instanceof Error ? e.message : String(e);
+      this.logger.error(`ingest put failed: camera=${ingestKey} file=${name} error=${error}`);
+      return { ok: false, error };
+    }
   }
 
   async deleteMedia(ingestKey: string, file: string) {
     const name = safeName(file);
     if (!name) return { ok: false, error: "bad file name" };
-    const store = await getMediaStore();
-    return store.delete(ingestKey, name);
+    try {
+      const store = await getMediaStore();
+      return await store.delete(ingestKey, name);
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      this.logger.error(`ingest delete failed: camera=${ingestKey} file=${name} error=${error}`);
+      return { ok: false, error };
+    }
   }
 
   async getMedia(ingestKey: string, file: string) {
     const name = safeName(file);
     if (!name) return { ok: false as const, error: "bad file name" };
-    const store = await getMediaStore();
-    return store.get(ingestKey, name);
+    try {
+      const store = await getMediaStore();
+      return await store.get(ingestKey, name);
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      this.logger.error(`playback read failed: camera=${ingestKey} file=${name} error=${error}`);
+      return { ok: false as const, error };
+    }
   }
 
   /** Liveness of a single camera (used where a screen wants one). */

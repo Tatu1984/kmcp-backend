@@ -37,7 +37,8 @@ export class CamerasController {
   // from the rate limiter — it would otherwise share the per-IP budget with the
   // admin's own playback traffic and tip the dashboard into 429s. It stays
   // admin-gated (@Roles above); the write routes below keep normal throttling.
-  @SkipThrottle()
+  // Both named throttlers, or the unlisted one still applies (see IngestController).
+  @SkipThrottle({ default: true, strict: true })
   @Get()
   @ApiOperation({ summary: "Every camera, with live status" })
   list(@Req() req: Request) {
