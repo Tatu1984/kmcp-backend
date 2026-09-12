@@ -1,7 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { ConfigService } from "@nestjs/config";
 
 import { PrismaService } from "@/prisma/prisma.service";
 import { AppException } from "@/common/errors/app.exception";
+import type { Env } from "@/config/env.config";
 import type { CreateCameraDto } from "./dto/camera.dto";
 import { newIngestKey, newIngestToken, hashToken } from "./ingest-token";
 import { liveness, livenessMany, playbackUrl, type CameraStatus } from "./status";
@@ -32,7 +35,11 @@ export interface EdgeAgentConfig {
 export class CamerasService {
   private readonly logger = new Logger(CamerasService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
   /** Every camera in the system, with live status read from storage. Org-wide. */
   async list(base: string): Promise<CameraView[]> {
@@ -135,6 +142,33 @@ export class CamerasService {
     if (!cam) return null;
     const { verifyToken } = await import("./ingest-token");
     return verifyToken(token, cam.ingestTokenHash) ? cam : null;
+  }
+
+  /**
+   * Verify a user access token and confirm it belongs to an administrator.
+   *
+   * Used by the playback route, which is @Public because it serves two kinds of
+   * caller (an admin's browser and the camera's own ffmpeg) and therefore cannot
+   * lean on the global guards. Mirrors what JwtAuthGuard does — same secret,
+   * same account checks — and then requires an admin role.
+   */
+  async authenticateAdmin(token: string | null): Promise<boolean> {
+    if (!token) return false;
+    try {
+      const claims = await this.jwt.verifyAsync<{ sub: string }>(token, {
+        secret: this.config.get("JWT_ACCESS_SECRET", { infer: true }),
+      });
+      if (!claims?.sub) return false;
+      const user = await this.prisma.user.findFirst({
+        where: { id: claims.sub, deletedAt: null },
+        select: { role: true, status: true },
+      });
+      if (!user) return false;
+      if (user.status === "SUSPENDED" || user.status === "BLACKLISTED") return false;
+      return user.role === "SUPER_ADMIN" || user.role === "ADMIN";
+    } catch {
+      return false;
+    }
   }
 
   /** True if a camera with this ingest key exists (for admin-gated playback). */

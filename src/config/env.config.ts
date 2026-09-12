@@ -44,7 +44,17 @@ const schema = z.object({
    */
   MEDIA_BACKEND: z.enum(["r2", "s3", "fs"]).default("r2"),
   HLS_KEY_PREFIX: z.string().default("hls"),
-  HLS_PUBLIC_BASE: z.string().url().optional(),
+  /**
+   * Optional, and an EMPTY value means unset.
+   *
+   * A dashboard and a .env file have no way to express "absent" other than an
+   * empty string, and `z.string().url().optional()` rejects `""` — which failed
+   * validation, which failed the bootstrap, which turned every request into a
+   * 500 that looked nothing like a bad environment variable. Empty is therefore
+   * normalised to undefined before the URL check.
+   */
+  HLS_PUBLIC_BASE: z
+    .preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().url().optional()),
   R2_TIMEOUT_MS: z.coerce.number().default(4000),
   MEDIA_FS_DIR: z.string().optional(),
 

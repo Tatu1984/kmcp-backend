@@ -61,6 +61,20 @@ export class IngestController {
   }
 
   /**
+   * The file name from the route's wildcard segment.
+   *
+   * Express 5 hands a named wildcard (`*path`) back as an ARRAY of segments,
+   * not the string Express 4 gave — so `@Param("path")` arrives as
+   * `["index7.ts"]`. Anything that treated it as a string threw immediately,
+   * which surfaced as a 500 on every ingest and playback request in a couple of
+   * milliseconds, before storage was ever touched. Accept either shape.
+   */
+  private filePart(path: string | string[] | undefined): string {
+    if (Array.isArray(path)) return path.join("/");
+    return path ?? "";
+  }
+
+  /**
    * The exact uploaded bytes as a Buffer.
    *
    * Normally the raw body parser in main.ts has already left a Buffer on
@@ -88,9 +102,14 @@ export class IngestController {
     }
   }
 
-  private async write(req: Request, ingestKey: string, path: string, res: Response) {
+  private async write(
+    req: Request,
+    ingestKey: string,
+    path: string | string[],
+    res: Response,
+  ) {
     const key = safeKey(ingestKey);
-    const file = safeName(path);
+    const file = safeName(this.filePart(path));
     if (!key || !file) return res.status(400).json({ error: "bad path" });
 
     const cam = await this.cameras.authenticateIngest(key, this.bearer(req));
@@ -110,7 +129,7 @@ export class IngestController {
     @Req() req: Request,
     @Res() res: Response,
     @Param("ingestKey") ingestKey: string,
-    @Param("path") path: string,
+    @Param("path") path: string | string[],
   ) {
     return this.write(req, ingestKey, path, res);
   }
@@ -121,7 +140,7 @@ export class IngestController {
     @Req() req: Request,
     @Res() res: Response,
     @Param("ingestKey") ingestKey: string,
-    @Param("path") path: string,
+    @Param("path") path: string | string[],
   ) {
     return this.write(req, ingestKey, path, res);
   }
@@ -132,10 +151,10 @@ export class IngestController {
     @Req() req: Request,
     @Res() res: Response,
     @Param("ingestKey") ingestKey: string,
-    @Param("path") path: string,
+    @Param("path") path: string | string[],
   ) {
     const key = safeKey(ingestKey);
-    const file = safeName(path);
+    const file = safeName(this.filePart(path));
     if (!key || !file) return res.status(400).json({ error: "bad path" });
     const cam = await this.cameras.authenticateIngest(key, this.bearer(req));
     if (!cam) return res.status(401).json({ error: "unauthorized" });
@@ -144,24 +163,43 @@ export class IngestController {
   }
 
   /**
-   * Playback — administrators only. Serves the bytes through this API rather
-   * than a public URL so the admin gate cannot be side-stepped with the URL.
+   * Playback — for an administrator, or for the camera's own Edge Agent.
+   *
+   * Two callers legitimately read these files, with different credentials:
+   *
+   *   - an administrator watching the wall, carrying a user JWT;
+   *   - ffmpeg itself, carrying only that camera's ingest token. The HLS muxer
+   *     runs with `append_list`, so on every restart it GETs the existing
+   *     playlist to continue its numbering rather than resetting to index0.
+   *
+   * Gating this on @Roles alone refused ffmpeg (401), which broke the append and
+   * with it the uploads that followed. So the route is @Public and authorises
+   * explicitly: an admin principal, or a valid ingest token for THIS camera.
+   * Neither path lets an anonymous caller read a street.
    */
-  @Roles("SUPER_ADMIN", "ADMIN")
+  @Public()
   @RawResponse()
   @Get(":ingestKey/*path")
   async play(
+    @Req() req: Request,
     @Res() res: Response,
     @Param("ingestKey") ingestKey: string,
-    @Param("path") path: string,
+    @Param("path") path: string | string[],
   ) {
     const key = safeKey(ingestKey);
-    const file = safeName(path);
+    const file = safeName(this.filePart(path));
     if (!key || !file) return res.status(400).json({ error: "bad path" });
 
-    // The camera must exist; any admin may then watch it.
-    if (!(await this.cameras.ingestKeyExists(key))) {
-      return res.status(404).json({ error: "not found" });
+    // The camera's own agent, by ingest token …
+    const agent = await this.cameras.authenticateIngest(key, this.bearer(req));
+    if (!agent) {
+      // … or an administrator, by user JWT.
+      const admin = await this.cameras.authenticateAdmin(this.bearer(req));
+      if (!admin) return res.status(401).json({ error: "unauthorized" });
+      // The camera must exist; any admin may then watch it.
+      if (!(await this.cameras.ingestKeyExists(key))) {
+        return res.status(404).json({ error: "not found" });
+      }
     }
 
     const result = await this.cameras.getMedia(key, file);
