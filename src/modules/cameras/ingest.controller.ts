@@ -207,6 +207,24 @@ export class IngestController {
 
     const { type, kind } = contentTypeFor(file);
 
+    /*
+     * A playlist must never be served from a cache, at any layer.
+     *
+     * `Cache-Control: no-store` tells the browser, but a CDN in front of the
+     * function is entitled to ignore it, and Vercel keys its edge cache on the
+     * URL alone — the playlist URL never changes while its contents change
+     * every two seconds. A cached copy hands the player an old window, which is
+     * how a tile ends up minutes behind and stays there until the viewer clears
+     * their history. These headers close that door explicitly rather than
+     * relying on the platform's default.
+     */
+    if (kind === "playlist") {
+      res.setHeader("CDN-Cache-Control", "no-store");
+      res.setHeader("Vercel-CDN-Cache-Control", "no-store");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+
     // With a public CDN base configured the store hands back a redirect URL, but
     // we still stream it through here so playback stays admin-gated.
     if (result.redirectUrl && !result.body) {
