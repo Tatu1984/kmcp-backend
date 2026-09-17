@@ -169,7 +169,7 @@ export class AuthController {
     @CurrentUser() user: AuthenticatedUser,
     @Body(zodPipe(BindDeviceSchema)) dto: BindDeviceDto,
   ) {
-    return this.auth.upsertDevice(user.id, dto);
+    return this.auth.bindDevice(user, dto);
   }
 
   @ApiBearerAuth("bearer")

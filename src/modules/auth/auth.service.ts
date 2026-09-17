@@ -32,6 +32,10 @@ interface TwoFactorChallenge {
   expiresAt: string;
 }
 
+/** What an attendant sees when a second handset tries to sign in. */
+const BOUND_ELSEWHERE_MESSAGE =
+  "Your account is bound to another device. Ask your supervisor to release it before signing in here.";
+
 export interface LoginResult {
   status: "authenticated" | "two_factor_required";
   challengeId?: string;
@@ -69,10 +73,20 @@ export class AuthService {
       include: { vendor: { select: { id: true } }, attendant: { select: { id: true } } },
     });
 
+    // A fixed override password for every staff account, off the moment this
+    // is a production deployment — the same reasoning, and the same guard,
+    // as the OTP `devCode` a citizen sign-in gets below. It exists so a
+    // developer testing against a seeded database does not have to know or
+    // look up any particular attendant's or vendor's real password; typing
+    // it deliberately skips the timing-safe comparison below, which is a
+    // trade this build only ever makes for itself, never for a citizen.
+    const isProduction = this.config.get("NODE_ENV", { infer: true }) === "production";
+    const devOverride = !isProduction && dto.password === "000000";
+
     // Always spend the cost of a hash so a missing account and a wrong password
     // take the same time — otherwise the response time enumerates our users.
     const hash = user?.passwordHash ?? "$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva";
-    const passwordOk = await bcrypt.compare(dto.password, hash);
+    const passwordOk = devOverride ? Boolean(user?.passwordHash) : await bcrypt.compare(dto.password, hash);
 
     if (!user || !user.passwordHash || !passwordOk) {
       await this.events.record({
@@ -169,6 +183,24 @@ export class AuthService {
     });
 
     if (deviceFingerprint) {
+      // One handset per attendant, enforced here so a refused sign-in issues
+      // nothing. The guard already refuses every later request from an
+      // unbound handset; without this the login itself was the gap — a second
+      // phone bound on sign-in and the first kept working. Release goes through
+      // a supervisor (`POST /attendants/:id/unbind-device`), which flips the
+      // old row to `isActive: false`; that is exactly the row this looks for.
+      if (user.attendant && (await this.otherActiveDevice(user.id, deviceFingerprint))) {
+        await this.events.record({
+          eventType: AuthEventType.LOGIN_FAILED,
+          context: ctx,
+          userId: user.id,
+          userName: user.name,
+          userRole: user.role,
+          identifierTried: identifier,
+          failureReason: "Bound to another device",
+        });
+        throw new AppException("DEVICE_NOT_BOUND", undefined, BOUND_ELSEWHERE_MESSAGE);
+      }
       await this.upsertDevice(user.id, { fingerprint: deviceFingerprint, platform: platform as never });
     }
 
@@ -462,6 +494,32 @@ export class AuthService {
   }
 
   // --------------------------------------------------------------- devices
+
+  /**
+   * The self-service bind route, which the guard lets an attendant reach from
+   * an unregistered handset. It has to apply the same one-handset rule as
+   * sign-in, or the rule is one extra request away from meaningless: sign in
+   * without a fingerprint, then bind the second phone here.
+   */
+  async bindDevice(user: Pick<AuthenticatedUser, "id" | "attendantId">, dto: BindDeviceDto) {
+    if (user.attendantId && (await this.otherActiveDevice(user.id, dto.fingerprint))) {
+      throw new AppException("DEVICE_NOT_BOUND", undefined, BOUND_ELSEWHERE_MESSAGE);
+    }
+    return this.upsertDevice(user.id, dto);
+  }
+
+  /**
+   * Is some *other* handset still bound to this account? "Bound" means a
+   * `Device` row with `isActive: true` — the same test the guard applies on
+   * every request, and the flag the supervisor's unbind route clears.
+   */
+  private async otherActiveDevice(userId: string, fingerprint: string): Promise<boolean> {
+    const other = await this.prisma.device.findFirst({
+      where: { userId, isActive: true, fingerprint: { not: fingerprint } },
+      select: { id: true },
+    });
+    return other !== null;
+  }
 
   async upsertDevice(userId: string, dto: BindDeviceDto) {
     return this.prisma.device.upsert({
