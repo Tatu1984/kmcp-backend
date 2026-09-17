@@ -48,6 +48,7 @@ const PAYMENT_SELECT = {
   refundedAmount: true,
   failureReason: true,
   createdAt: true,
+  walletTopUpUserId: true,
   session: {
     select: { id: true, code: true, plateNumber: true, zoneId: true, vendorId: true, payableAmount: true },
   },
@@ -329,13 +330,23 @@ export class PaymentsService {
   }
 
   /**
-   * Marks a payment captured and issues its receipt.
+   * Marks a payment captured, issues its receipt, and runs whatever a capture
+   * implies — crediting a wallet top-up, activating a pass.
    *
    * Written so that calling it twice is harmless: the webhook and the client
-   * callback race constantly, and both must be able to arrive.
+   * callback (`verify()`) race constantly, and both must be able to arrive,
+   * in either order. The side effects live here rather than in each caller
+   * precisely so that whichever one gets there first is the only one that
+   * runs them — `verify()` alone, with no webhook ever reaching this
+   * deployment at all (a plain `localhost` backend during sandbox testing,
+   * say), is a completely ordinary way for a payment to be confirmed, and it
+   * must credit the wallet exactly the same as a webhook-confirmed one would.
    */
   private async capture(id: string, gatewayPaymentId: string, signatureVerified: boolean) {
-    const existing = await this.prisma.payment.findUnique({ where: { id }, select: { status: true } });
+    const existing = await this.prisma.payment.findUnique({
+      where: { id },
+      select: { status: true },
+    });
     if (existing?.status === PaymentStatus.CAPTURED) {
       const already = await this.prisma.payment.findUnique({ where: { id }, select: PAYMENT_SELECT });
       return already!;
@@ -354,6 +365,44 @@ export class PaymentsService {
     });
 
     await this.issueReceipt(payment.id);
+
+    if (payment.walletTopUpUserId) {
+      const agg = await this.prisma.walletEntry.aggregate({
+        where: { userId: payment.walletTopUpUserId },
+        _sum: { amount: true },
+      });
+      const currentBalance = agg._sum.amount ?? 0;
+
+      await this.prisma.walletEntry.create({
+        data: {
+          userId: payment.walletTopUpUserId,
+          kind: WalletEntryKind.TOPUP,
+          amount: payment.amount,
+          balanceAfter: currentBalance + payment.amount,
+          description: `Added by ${payment.mode}`,
+          sessionId: null,
+          zoneId: null,
+        },
+      });
+    }
+
+    if (payment.passId) {
+      const pass = await this.prisma.pass.findUnique({
+        where: { id: payment.passId },
+        select: { id: true, plan: { select: { durationDays: true } } },
+      });
+      if (pass) {
+        await this.prisma.pass.update({
+          where: { id: payment.passId },
+          data: {
+            status: PassStatus.ACTIVE,
+            validFrom: new Date(),
+            validTo: new Date(Date.now() + pass.plan.durationDays * 24 * 60 * 60 * 1000),
+          },
+        });
+      }
+    }
+
     return this.prisma.payment.findUnique({ where: { id }, select: PAYMENT_SELECT }) as Promise<
       typeof payment
     >;
@@ -384,14 +433,7 @@ export class PaymentsService {
 
     const payment = await this.prisma.payment.findFirst({
       where: { gatewayOrderId: orderId },
-      select: {
-        id: true,
-        status: true,
-        amount: true,
-        mode: true,
-        passId: true,
-        walletTopUpUserId: true,
-      },
+      select: { id: true, status: true, amount: true },
     });
     if (!payment) {
       // Not an error: the account may be shared, and events for other systems
@@ -401,12 +443,11 @@ export class PaymentsService {
     }
 
     if (type === "payment.captured") {
-      // A replay must short-circuit before doing anything at all, including
-      // the wallet credit and pass activation below — those are consequences
-      // of a capture, and must run exactly once. `capture()` itself is
-      // idempotent on `Payment.status`, but it knows nothing about these side
-      // effects, so the check is duplicated here against the status read
-      // *before* `capture()` runs.
+      // A replay must short-circuit before doing anything at all. `capture()`
+      // is idempotent on `Payment.status` too and would refuse to run its own
+      // side effects twice regardless, but the amount-mismatch check and the
+      // audit record below are webhook-specific and have no reason to repeat
+      // on a delivery Razorpay is only retrying because it never saw our 2xx.
       if (payment.status === PaymentStatus.CAPTURED) {
         return { handled: true, event: type, paymentId: payment.id, replayed: true };
       }
@@ -425,46 +466,11 @@ export class PaymentsService {
         return { handled: false, reason: "amount mismatch" };
       }
 
+      // Crediting a wallet top-up and activating a pass both live inside
+      // `capture()` now — `verify()`'s checkout callback reaches this exact
+      // payment the same way this webhook does, and each must produce the
+      // same result whichever of them gets there first.
       await this.capture(payment.id, paymentId, true);
-
-      // Credit the citizen's wallet if this gateway payment was a top-up.
-      if (payment.walletTopUpUserId) {
-        const agg = await this.prisma.walletEntry.aggregate({
-          where: { userId: payment.walletTopUpUserId },
-          _sum: { amount: true },
-        });
-        const currentBalance = agg._sum.amount ?? 0;
-
-        await this.prisma.walletEntry.create({
-          data: {
-            userId: payment.walletTopUpUserId,
-            kind: WalletEntryKind.TOPUP,
-            amount: payment.amount,
-            balanceAfter: currentBalance + payment.amount,
-            description: `Added by ${payment.mode}`,
-            sessionId: null,
-            zoneId: null,
-          },
-        });
-      }
-
-      // Activate the pass this gateway payment was purchasing.
-      if (payment.passId) {
-        const pass = await this.prisma.pass.findUnique({
-          where: { id: payment.passId },
-          select: { id: true, plan: { select: { durationDays: true } } },
-        });
-        if (pass) {
-          await this.prisma.pass.update({
-            where: { id: payment.passId },
-            data: {
-              status: PassStatus.ACTIVE,
-              validFrom: new Date(),
-              validTo: new Date(Date.now() + pass.plan.durationDays * 24 * 60 * 60 * 1000),
-            },
-          });
-        }
-      }
 
       await this.audit.record({
         actor: null,
