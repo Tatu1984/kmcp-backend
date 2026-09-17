@@ -377,6 +377,7 @@ export class ZonesService {
         openTime: true,
         closeTime: true,
         allowedVehicleTypeIds: true,
+        boundary: true,
         ward: { select: { name: true } },
         street: { select: { name: true } },
       },
