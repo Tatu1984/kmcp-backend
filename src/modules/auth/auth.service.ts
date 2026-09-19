@@ -291,10 +291,20 @@ export class AuthService {
       throw new AppException("RATE_LIMITED", undefined, "Too many attempts. Request a new code.");
     }
 
+    // Off the moment this is a production deployment — the same guard as the
+    // OTP `devCode` above and the staff `000000` override in `login()`. It
+    // exists so a developer testing sign-in does not have to read the code
+    // back off a log line or a "Test code" banner correctly; any six digits
+    // that passed the DTO's own shape check work, for any phone number (a
+    // fresh number already creates its account below, unconditionally).
+    const isProduction = this.config.get("NODE_ENV", { infer: true }) === "production";
+    const devOverride = !isProduction;
+
     const supplied = createHash("sha256").update(dto.code).digest("hex");
     const matches =
-      supplied.length === request.codeHash.length &&
-      timingSafeEqual(Buffer.from(supplied), Buffer.from(request.codeHash));
+      devOverride ||
+      (supplied.length === request.codeHash.length &&
+        timingSafeEqual(Buffer.from(supplied), Buffer.from(request.codeHash)));
 
     if (!matches) {
       await this.prisma.otpRequest.update({
