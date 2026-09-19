@@ -18,7 +18,22 @@ export const StartSessionSchema = z.object({
   clientEventId: z.string().trim().min(8).max(64).optional(),
 
   zoneId: z.string().min(1),
-  slotId: z.string().optional(),
+
+  /**
+   * The specific bay, when the attendant allocated one.
+   *
+   * Optional at this layer and validated hard in the service. It has to stay
+   * optional: a zone's priced capacity and its painted bays are separate
+   * things, most zones have fewer of the second than the first, and a session
+   * entered in the portal or replayed from an offline queue may name no bay at
+   * all. The vendor app insists on one where the zone actually has bays — that
+   * is a decision about a screen, not about what the API can accept.
+   *
+   * `min(1)` because an empty string is not "no bay": it is a bay id that
+   * cannot exist, and it used to reach the insert and fail there as a foreign
+   * key error rather than as a refusal anyone could read.
+   */
+  slotId: z.string().min(1).optional(),
 
   /**
    * Typed by the attendant from the plate. Phase 1 has no ANPR — the

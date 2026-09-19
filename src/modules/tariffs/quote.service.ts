@@ -42,6 +42,23 @@ export interface QuoteInput {
   discountCode?: string;
 }
 
+/**
+ * A session's stored `fareBreakdown`, read back as the quote it was written
+ * from.
+ *
+ * `SessionsService.endOnce` persists this very object, whole, when it ends a
+ * session — so this is a cast and not a reconstruction, and it lives here
+ * because the shape being asserted is this file's to define.
+ *
+ * It admits null deliberately. The column is nullable; a cancelled session
+ * never had a fare; and every completed session in the seeded history was
+ * written with its amounts and no breakdown. Declaring a `Quote` where there is
+ * none would not make one exist — it would only move the failure out of this
+ * function and into whichever app read `quote.lines`.
+ */
+export const storedQuote = (value: Prisma.JsonValue | null | undefined): Quote | null =>
+  (value ?? null) as unknown as Quote | null;
+
 type TariffWithRules = Prisma.TariffGetPayload<{ include: { rules: true } }>;
 
 /**

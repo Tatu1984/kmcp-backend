@@ -12,11 +12,13 @@ import { MeService } from "./me.service";
 import {
   AddFavouriteSchema,
   AddVehicleSchema,
+  ClaimSessionSchema,
   MyPaymentsQuerySchema,
   MySessionsQuerySchema,
   MySummaryQuerySchema,
   type AddFavouriteDto,
   type AddVehicleDto,
+  type ClaimSessionDto,
   type MyPaymentsQueryDto,
   type MySessionsQueryDto,
   type MySummaryQueryDto,
@@ -76,6 +78,41 @@ export class MeController {
     @RequestId() requestId: string,
   ) {
     return this.me.removeVehicle(vehicleId, user, { ...info, requestId });
+  }
+
+  /**
+   * Declared ahead of `sessions` and of anything parameterised that may be
+   * added under it later. `sessions` cannot swallow `sessions/active` — the
+   * paths are different lengths — but a `sessions/:id` added above this line
+   * one day would, and would answer a poll for "what am I parked in" by looking
+   * for a session whose id is the word "active".
+   */
+  @Get("sessions/active")
+  @ApiOperation({
+    summary: "What this citizen is parked in right now",
+    description:
+      "Both ACTIVE and OVERSTAY, newest first. The app polls this: filtering the list by a single " +
+      "status loses a session the moment the overstay sweep promotes it.",
+  })
+  activeSessions(@CurrentUser() user: AuthenticatedUser) {
+    return this.me.listActiveSessions(user);
+  }
+
+  @Post("sessions/claim")
+  @ApiOperation({
+    summary: "Claim a parking session by the code on the ticket",
+    description:
+      "For a driver whose plate was never registered: the code attaches the vehicle — and with it " +
+      "every session on that plate — to this account. Accepted while the session is live or shortly " +
+      "after it ends, and refused outright if the plate already belongs to another account.",
+  })
+  claimSession(
+    @Body(zodPipe(ClaimSessionSchema)) dto: ClaimSessionDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() info: { ip?: string },
+    @RequestId() requestId: string,
+  ) {
+    return this.me.claimSession(dto, user, { ...info, requestId });
   }
 
   @Get("sessions")

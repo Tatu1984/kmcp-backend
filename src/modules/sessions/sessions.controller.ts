@@ -7,6 +7,7 @@ import {
   CurrentUser,
   IdempotencyKey,
   RequestId,
+  RequireAnyPermission,
   RequirePermissions,
   type AuthenticatedUser,
 } from "@/common/decorators/auth.decorators";
@@ -64,6 +65,32 @@ export class SessionsController {
   })
   lookup(@Param("plateNumber") plateNumber: string, @CurrentUser() user: AuthenticatedUser) {
     return this.sessions.lookupPlate(plateNumber, user);
+  }
+
+  /**
+   * Both apps read this one, which is why it is the only route in this file not
+   * on `session.read` alone: the attendant needs the running total to tell a
+   * driver what they owe, and the citizen needs it to watch their own fare
+   * tick up. `session.read.own` is the citizen's grant; the service then
+   * refuses any session whose vehicle is not theirs, because the permission
+   * answers "may you call this" and not "may you see this row".
+   *
+   * Declared above `:id` — a bare `:id` cannot match a two-segment path, but
+   * keeping the specific route first means a future `:id/:anything` cannot
+   * shadow it either.
+   */
+  @RequireAnyPermission("session.read", "session.read.own")
+  @Get(":id/quote")
+  @ApiOperation({
+    summary: "What this session costs if it ends now",
+    description:
+      "A provisional fare from the same engine that prices the real one, so the apps can poll a " +
+      "live total without knowing the tariff. A session that has already ended returns the fare " +
+      "it was charged, from storage — a finished session's money never moves. `provisional` says " +
+      "which of the two you are holding.",
+  })
+  quote(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.sessions.quoteFor(id, user);
   }
 
   @RequirePermissions("session.read")

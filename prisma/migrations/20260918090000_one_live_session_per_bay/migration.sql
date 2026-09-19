@@ -1,0 +1,66 @@
+-- One live session per bay, enforced by the database.
+--
+-- NOT APPLIED. Written by hand and left unapplied deliberately — see the note
+-- at the foot of this file before running it.
+--
+-- `SessionsService.startOnce` now claims a bay with a conditional write,
+-- `UPDATE "Slot" SET status = 'OCCUPIED' WHERE id = $1 AND status = 'AVAILABLE'`
+-- inside the same transaction as the session insert, and treats zero affected
+-- rows as "another attendant got there first". That closes the race: two
+-- handsets allocating the same bay in the same second cannot both succeed,
+-- because exactly one of those statements can move the row out of AVAILABLE.
+--
+-- What it does not close is drift. The invariant "at most one live session per
+-- bay" is being defended through a *different* column — `Slot.status` — and
+-- anything that puts that column back to AVAILABLE while a car is still parked
+-- breaks the defence without touching a session. `SlotsService.changeStatus`
+-- refuses to take an occupied bay OUT_OF_SERVICE, and refuses nothing else: an
+-- officer may set an occupied bay back to AVAILABLE today, and the next start
+-- against that bay is then accepted on a status that is simply wrong. The
+-- session rows are what the fare, the occupancy board and the citizen's "where
+-- is my car" all read, so the constraint belongs on them.
+--
+-- A partial unique index says it directly, in the one place that cannot be
+-- talked out of it: among sessions that are still running, a bay appears at most
+-- once. Sessions with no bay are excluded, because most zones have fewer painted
+-- bays than their priced capacity and a null slot is the normal case, not a
+-- violation — a plain unique index would have made the second bay-less session
+-- in the city fail.
+CREATE UNIQUE INDEX "ParkingSession_slotId_live_key"
+  ON "ParkingSession" ("slotId")
+  WHERE "slotId" IS NOT NULL AND "status" IN ('ACTIVE', 'OVERSTAY');
+
+-- Why this is safe to create, and why it is not applied yet.
+--
+-- Safe: nothing in the seed data assigns a bay to a session at all — neither
+-- `seed-operations.ts` nor `seed-history.ts` writes `slotId` — so no scratch or
+-- demo database can hold a pair that would fail the index build. A production
+-- database that has been taking bay allocations through the unvalidated code
+-- path may hold one, and the build would then fail loudly rather than corrupt
+-- anything. Before running this, read what is there:
+--
+--   SELECT "slotId", COUNT(*) FROM "ParkingSession"
+--   WHERE "slotId" IS NOT NULL AND "status" IN ('ACTIVE', 'OVERSTAY')
+--   GROUP BY "slotId" HAVING COUNT(*) > 1;
+--
+-- Any row that comes back is two cars recorded in one bay, and is a question for
+-- the zone officer — which of them is actually there — not something a migration
+-- should guess at.
+--
+-- Not applied: the instruction for this change was to touch no database, and
+-- there is a second reason to leave it. `CREATE UNIQUE INDEX` without
+-- CONCURRENTLY takes an ACCESS EXCLUSIVE lock on `ParkingSession` for the
+-- duration of the build, which on the live table would stop every start and
+-- every unpark in the city while it ran. On a table this size that is seconds,
+-- but seconds at the kerb are a queue. Prisma Migrate cannot run CONCURRENTLY
+-- (it wraps each migration in a transaction), so the deployment choice is a
+-- short maintenance window with this file, or the same index created by hand
+-- with CONCURRENTLY and this migration marked as applied.
+--
+-- One consequence to know about either way: `schema.prisma` cannot describe
+-- this. Prisma has no syntax for a partial index — there is no `WHERE` on
+-- `@@unique` — so unlike every other structure in this history the index cannot
+-- be mirrored in the schema, and `prisma migrate dev` will report it as drift
+-- and offer to drop it. That is the price of putting the invariant where it
+-- cannot be argued with, and it is cheaper than the alternative: trusting a
+-- status column that an officer is allowed to edit.

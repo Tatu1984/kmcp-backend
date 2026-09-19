@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 
 import { zodPipe } from "@/common/pipes/zod-validation.pipe";
@@ -23,6 +23,8 @@ import {
   type UpdateAttendantDto,
   UnbindDeviceSchema,
   type UnbindDeviceDto,
+  RemoveAttendantSchema,
+  type RemoveAttendantDto,
 } from "./dto/attendant.dto";
 
 @ApiTags("Attendants")
@@ -126,5 +128,25 @@ export class AttendantsController {
     @RequestId() requestId: string,
   ) {
     return this.attendants.transfer(id, dto, user, { ...info, requestId });
+  }
+
+  @RequirePermissions("attendant.write")
+  @Delete(":id")
+  @ApiOperation({
+    summary: "Remove an attendant",
+    description:
+      "Takes the account out of service for good: they cannot sign in, their devices stop working " +
+      "and they leave the roster. Nothing is erased — their shifts, sessions, cash collections and " +
+      "photographs stay attributable, which is what the record is for. Refused while a shift is " +
+      "open or a session is still running.",
+  })
+  remove(
+    @Param("id") id: string,
+    @Body(zodPipe(RemoveAttendantSchema)) dto: RemoveAttendantDto,
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() info: { ip?: string },
+    @RequestId() requestId: string,
+  ) {
+    return this.attendants.remove(id, dto.reason, user, { ...info, requestId });
   }
 }

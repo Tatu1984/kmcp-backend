@@ -228,7 +228,7 @@ const SEEDED_ROLES = [
     isSuperuser: false,
     isZoneScoped: false,
     // Granted by 20260906180000_citizen_permissions. The public app still
-    // holds no portal permission — these two open exactly six routes to a
+    // holds no portal permission — these two open exactly seven routes to a
     // citizen's own data (see SELF_SERVICE_VIA_ANY_PERMISSION below) and
     // nothing else in the API.
     permissions: ["zone.read.public", "session.read.own"] as Permission[],
@@ -387,6 +387,15 @@ describe("every route says how it is guarded", () => {
     "MeController.addVehicle",
     "MeController.removeVehicle",
     "MeController.listSessions",
+    // Same rule, one status filter fewer: `where: { vehicle: { ownerUserId:
+    // user.id } }` with the two parked statuses.
+    "MeController.activeSessions",
+    // Takes a session code and no account id. It cannot read the session it
+    // finds — it answers with that row only *after* `resolveOrClaimVehicle` has
+    // agreed the plate is unowned or already this citizen's, and refuses
+    // outright when it belongs to someone else. So the code narrows which row
+    // may be claimed; it never widens whose data can be read.
+    "MeController.claimSession",
     "MeController.summary",
     "MeController.listPayments",
     "MeController.listFavourites",
@@ -605,10 +614,10 @@ describe("the shape of the matrix", () => {
   });
 
   /**
-   * The six routes `20260906180000_citizen_permissions` opened to a citizen
-   * — each one already scoped, at the service layer, to the caller's own
-   * data (see `ZonesService`/`SlotsService`/`TariffsService`, which need no
-   * extra scoping since they carry no account-specific data, and
+   * The routes `session.read.own` and `zone.read.public` open to a citizen —
+   * each one already scoped, at the service layer, to the caller's own data
+   * (see `ZonesService`/`SlotsService`/`TariffsService`, which need no extra
+   * scoping since they carry no account-specific data, and
    * `PaymentsService.collect`, which checks `vehicle.ownerUserId` itself).
    * A name appearing here without that service-layer check behind it is a
    * bug, not a reason to add it — the citizen role's whole point is that it
@@ -621,6 +630,13 @@ describe("the shape of the matrix", () => {
     "TariffsController.applicable",
     "PaymentsController.collect",
     "PaymentsController.verify",
+    // The live running fare. Shared with the attendant app, which is why it is
+    // on `@RequireAnyPermission` rather than either grant alone.
+    // `SessionsService.quoteFor` refuses a CITIZEN whose `vehicle.ownerUserId`
+    // is not their own id — the identical check `PaymentsService.collect` makes
+    // two lines above it in this list, and for the identical reason: the grant
+    // says the citizen may ask about a session of theirs, not about a session.
+    "SessionsController.quote",
   ];
 
   it("gives a citizen exactly its scoped self-service routes, nothing else in the portal", async () => {
@@ -629,7 +645,7 @@ describe("the shape of the matrix", () => {
       PERMISSIONED.map(async (r) => [r, await verdict(guard, r, principal("CITIZEN"))] as const),
     );
     // The strongest single statement this file makes: the public app's role
-    // cannot call one permissioned route in the entire API beyond these six,
+    // cannot call one permissioned route in the entire API beyond these seven,
     // each individually justified above.
     expect(
       results

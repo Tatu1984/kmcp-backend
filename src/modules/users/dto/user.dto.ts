@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
 import { UserStatus } from "@prisma/client";
 import { PaginationSchema } from "@/common/dto/pagination.dto";
+import { normalisePhone } from "@/common/utils/phone.util";
 
 /**
  * Portal staff only. Vendors, attendants and citizens are created through their
@@ -21,7 +22,14 @@ const PHONE = /^\+?[1-9]\d{7,14}$/;
 export const CreateUserSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().transform((e) => e.toLowerCase()),
-  phone: z.string().trim().regex(PHONE, "Use an international format number").optional(),
+  // Normalised so the number a staff account is created with is the number
+  // sign-in looks it up by — see `normalisePhone`.
+  phone: z
+    .string()
+    .trim()
+    .regex(PHONE, "Use an international format number")
+    .transform(normalisePhone)
+    .optional(),
   role: StaffRole,
   password: z.string().min(10, "At least 10 characters for a portal account").max(128),
   /** Only meaningful for a zone officer. */
@@ -32,7 +40,14 @@ export type CreateUserDto = z.infer<typeof CreateUserSchema>;
 export const UpdateUserSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   email: z.string().trim().email().transform((e) => e.toLowerCase()).optional(),
-  phone: z.string().trim().regex(PHONE, "Use an international format number").optional(),
+  // Normalised so the number a staff account is created with is the number
+  // sign-in looks it up by — see `normalisePhone`.
+  phone: z
+    .string()
+    .trim()
+    .regex(PHONE, "Use an international format number")
+    .transform(normalisePhone)
+    .optional(),
 });
 export type UpdateUserDto = z.infer<typeof UpdateUserSchema>;
 

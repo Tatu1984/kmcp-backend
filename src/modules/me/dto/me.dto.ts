@@ -13,6 +13,23 @@ export const MySessionsQuerySchema = PaginationSchema.extend({
 });
 export type MySessionsQueryDto = z.infer<typeof MySessionsQuerySchema>;
 
+/**
+ * The code on the ticket, as a citizen reads it out.
+ *
+ * `generateSessionCode` writes `KMCP-` and six characters from an alphabet with
+ * no 0/O or 1/I in it, and none of that is pinned down here on purpose: the
+ * lookup is an exact match against a unique column, so a code that matches no
+ * row is already a 404, and encoding the prefix and alphabet in the schema
+ * would buy nothing while refusing outright any code from a pre-KMCP import or
+ * a later format. Trimmed and bounded is all the validation this needs; the
+ * service uppercases it, because nobody typing "kmcp-8f3k2q" means something
+ * else by it.
+ */
+export const ClaimSessionSchema = z.object({
+  code: z.string().trim().min(4).max(32),
+});
+export type ClaimSessionDto = z.infer<typeof ClaimSessionSchema>;
+
 export const MySummaryQuerySchema = z.object({
   /** "2026-09". Defaults to the current month when omitted. */
   month: z

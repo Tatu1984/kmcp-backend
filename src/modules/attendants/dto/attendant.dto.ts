@@ -1,11 +1,22 @@
 import { z } from "zod";
 import { PaginationSchema } from "@/common/dto/pagination.dto";
+import { normalisePhone } from "@/common/utils/phone.util";
 
 const PHONE = /^\+?[1-9]\d{7,14}$/;
 
 export const CreateAttendantSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  phone: z.string().trim().regex(PHONE, "Use an international format number, e.g. +919830011223"),
+  /**
+   * Normalised on the way in, because sign-in normalises on the way out. An
+   * attendant registered as `9433361718` and a handset signing in with the
+   * same ten digits have to arrive at one number, or the account is
+   * unreachable — see `normalisePhone`.
+   */
+  phone: z
+    .string()
+    .trim()
+    .regex(PHONE, "Use an international format number, e.g. +919830011223")
+    .transform(normalisePhone),
   email: z.string().trim().email().optional(),
   vendorId: z.string().min(1, "An attendant works for a vendor"),
   employeeCode: z
@@ -46,6 +57,16 @@ export const TransferAttendantSchema = z.object({
   reason: z.string().trim().min(4, "Say why").max(500),
 });
 export type TransferAttendantDto = z.infer<typeof TransferAttendantSchema>;
+
+/**
+ * Removing an attendant. A reason is required for the same purpose it is on a
+ * deactivation: the row survives, so the audit trail is the only place the
+ * "why" can live.
+ */
+export const RemoveAttendantSchema = z.object({
+  reason: z.string().trim().min(4, "Say why").max(500),
+});
+export type RemoveAttendantDto = z.infer<typeof RemoveAttendantSchema>;
 
 export const UnbindDeviceSchema = z.object({
   reason: z.string().trim().min(4, "Say why — a lost handset and a shared login are not the same").max(500),
