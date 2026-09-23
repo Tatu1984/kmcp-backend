@@ -671,6 +671,10 @@ model Payment {
   gateway                String? // razorpay
   gatewayOrderId         String?
   gatewayPaymentId       String?         @unique
+  /// The Razorpay QR code a driver scans to pay this, for UPI_QR collections.
+  /// A QR payment carries no order, so this is the only handle the webhook has
+  /// to find the payment it belongs to.
+  gatewayQrId            String?         @unique
   signatureVerified      Boolean         @default(false)
   collectedByAttendantId String?
   paidByUserId           String?

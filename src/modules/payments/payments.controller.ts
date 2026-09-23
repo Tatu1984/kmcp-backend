@@ -128,6 +128,42 @@ export class PaymentsController {
   receipt(@Param("id") id: string) {
     return this.payments.issueReceipt(id);
   }
+
+  @RequirePermissions("session.read")
+  @Post(":id/qr/reconcile")
+  @ApiOperation({
+    summary: "Ask the gateway whether a UPI QR has been paid",
+    description:
+      "For the handset watching a QR on screen. The webhook remains the authority and reaches the " +
+      "same capture; this answers now rather than whenever a delivery arrives — and is the only " +
+      "way the flow works at all on a machine Razorpay cannot reach.",
+  })
+  reconcileQr(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() info: { ip?: string },
+    @RequestId() requestId: string,
+  ) {
+    return this.payments.reconcileQr(id, user, { ...info, requestId });
+  }
+
+  @RequirePermissions("session.read")
+  @Post(":id/qr/close")
+  @ApiOperation({
+    summary: "Stop an unpaid UPI QR being payable",
+    description:
+      "For the attendant who backs out — the driver paid cash instead, or walked off. A code left " +
+      "live can be paid later by anyone holding a photograph of it. A code already paid is left " +
+      "alone; Razorpay closes a single-use code itself on payment.",
+  })
+  closeQr(
+    @Param("id") id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() info: { ip?: string },
+    @RequestId() requestId: string,
+  ) {
+    return this.payments.closeQr(id, user, { ...info, requestId });
+  }
 }
 
 /**

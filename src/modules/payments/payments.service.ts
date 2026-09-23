@@ -41,6 +41,7 @@ const PAYMENT_SELECT = {
   gateway: true,
   gatewayOrderId: true,
   gatewayPaymentId: true,
+  gatewayQrId: true,
   signatureVerified: true,
   collectedByAttendantId: true,
   paidByUserId: true,
@@ -54,6 +55,18 @@ const PAYMENT_SELECT = {
   },
   receipt: { select: { id: true, number: true, gstInvoiceNo: true, issuedAt: true, sentChannels: true } },
 } satisfies Prisma.PaymentSelect;
+
+/**
+ * How long a UPI QR stays payable.
+ *
+ * Razorpay allows two minutes to two hours on a single-use code and quietly
+ * reduces anything longer. Ten minutes is the shape of the actual event: a
+ * driver is standing at the car with the attendant, and the code is either
+ * scanned in the next minute or the fare is being settled some other way. A
+ * code left payable after that is one an attendant could hand out later for a
+ * fare nobody is standing there to owe.
+ */
+const QR_VALID_MS = 10 * 60 * 1000;
 
 const GATEWAY_MODES: PaymentMode[] = [
   PaymentMode.UPI_QR,
@@ -234,6 +247,56 @@ export class PaymentsService {
       ]);
     }
 
+    /**
+     * A QR is collected differently from every other gateway mode, and the
+     * difference is who is holding the phone.
+     *
+     * Every other mode opens a checkout sheet on the device that called this,
+     * against an order. A QR is shown on the attendant's screen and paid from
+     * the driver's own UPI app, which never touches this system — so there is
+     * no order, no checkout, and no signed callback to confirm it with. What
+     * comes back instead is a hosted image and, later, a `qr_code.credited`
+     * webhook.
+     */
+    if (dto.mode === PaymentMode.UPI_QR) {
+      const closeBy = new Date(Date.now() + QR_VALID_MS);
+      const qr = await this.razorpay.createQrCode(owed, `Parking ${session.code}`, closeBy, {
+        sessionCode: session.code,
+        sessionId: session.id,
+      });
+
+      const payment = await this.prisma.payment.create({
+        data: {
+          sessionId: session.id,
+          shiftId: session.shiftId,
+          mode: PaymentMode.UPI_QR,
+          amount: owed,
+          status: PaymentStatus.PENDING,
+          idempotencyKey: dto.idempotencyKey,
+          gateway: "razorpay",
+          gatewayQrId: qr.id,
+          collectedByAttendantId: user.attendantId ?? session.attendantId,
+          paidByUserId: user.role === SYSTEM_ROLES.CITIZEN ? user.id : dto.paidByUserId,
+        },
+        select: PAYMENT_SELECT,
+      });
+
+      await this.audit.record({
+        actor: user,
+        action: "PAYMENT_QR_CREATE",
+        entity: "Payment",
+        entityId: payment.id,
+        after: { sessionCode: session.code, amount: owed, qrId: qr.id },
+        ...ctx,
+      });
+
+      return {
+        ...payment,
+        replayed: false,
+        qr: { id: qr.id, imageUrl: qr.image_url, amount: owed, expiresAt: closeBy.toISOString() },
+      };
+    }
+
     const order = await this.razorpay.createOrder(owed, session.code, {
       sessionCode: session.code,
       sessionId: session.id,
@@ -271,6 +334,113 @@ export class PaymentsService {
       gatewayKeyId: this.razorpay.keyId,
       gatewayOrder: { id: order.id, amount: order.amount, currency: order.currency },
     };
+  }
+
+  /**
+   * Asks Razorpay whether a QR has been paid yet.
+   *
+   * The webhook is the authority and this changes nothing about that — it
+   * reaches the same `capture()` by the same door. What it provides is an
+   * answer now, for the two cases where waiting for a webhook is not an
+   * option. Razorpay cannot reach a laptop, so on a development machine no
+   * `qr_code.credited` will ever arrive and without this the flow could not be
+   * exercised at all. And at a kerb, an attendant and a driver are both
+   * standing at the car waiting to be told the money landed; a delivery that
+   * is thirty seconds late is thirty seconds of two people looking at a
+   * screen.
+   *
+   * Safe to call as often as a handset likes: a payment already captured
+   * returns immediately, and `capture()` is idempotent besides.
+   */
+  async reconcileQr(id: string, user: AuthenticatedUser, ctx: Ctx) {
+    // Scoped exactly as `findOne` is, so an attendant can only act on a
+    // payment inside their own vendor's zones.
+    const payment = await this.prisma.payment.findFirst({
+      where: scoped<Prisma.PaymentWhereInput>(this.scopeFilter(user), { id }),
+      select: PAYMENT_SELECT,
+    });
+    if (!payment) throw AppException.notFound("payment");
+
+    if (payment.status === PaymentStatus.CAPTURED) return { ...payment, settled: true };
+    if (payment.mode !== PaymentMode.UPI_QR || !payment.gatewayQrId) {
+      return { ...payment, settled: false };
+    }
+
+    const { items } = await this.razorpay.qrCodePayments(payment.gatewayQrId);
+    const paid = items.find((item) => item.status === "captured");
+    if (!paid) return { ...payment, settled: false };
+
+    // The same refusal the webhook makes, for the same reason: a figure that
+    // is not the fare is never quietly accepted, whichever route reports it.
+    if (paid.amount !== payment.amount) {
+      this.logger.error(
+        `QR ${payment.gatewayQrId} was paid ${paid.amount} against a fare of ${payment.amount}`,
+      );
+      await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: { failureReason: `Gateway reported ${paid.amount} against a fare of ${payment.amount}` },
+      });
+      return { ...payment, settled: false, mismatch: true };
+    }
+
+    await this.capture(payment.id, paid.id, true);
+
+    await this.audit.record({
+      actor: user,
+      action: "PAYMENT_QR_RECONCILED",
+      entity: "Payment",
+      entityId: payment.id,
+      after: { qrId: payment.gatewayQrId, gatewayPaymentId: paid.id, amount: paid.amount },
+      ...ctx,
+    });
+
+    const settled = await this.prisma.payment.findUnique({ where: { id }, select: PAYMENT_SELECT });
+    return { ...settled!, settled: true };
+  }
+
+  /**
+   * Stops an unpaid QR being payable.
+   *
+   * For the attendant who backs out — the driver decided to pay cash, or
+   * walked off. A code that stays live is one that can be paid later, by
+   * anybody holding a photograph of it, against a fare that has since been
+   * settled some other way.
+   *
+   * A code that has already been paid is left alone: Razorpay closes a
+   * single-use code itself on payment, and "close" on money already taken
+   * would be a lie about what happened.
+   */
+  async closeQr(id: string, user: AuthenticatedUser, ctx: Ctx) {
+    // Scoped exactly as `findOne` is, so an attendant can only act on a
+    // payment inside their own vendor's zones.
+    const payment = await this.prisma.payment.findFirst({
+      where: scoped<Prisma.PaymentWhereInput>(this.scopeFilter(user), { id }),
+      select: PAYMENT_SELECT,
+    });
+    if (!payment) throw AppException.notFound("payment");
+
+    if (payment.status === PaymentStatus.CAPTURED) return { ...payment, closed: false, paid: true };
+    if (payment.mode !== PaymentMode.UPI_QR || !payment.gatewayQrId) {
+      return { ...payment, closed: false, paid: false };
+    }
+
+    await this.razorpay.closeQrCode(payment.gatewayQrId);
+    const cancelled = await this.prisma.payment.update({
+      where: { id },
+      data: { status: PaymentStatus.FAILED, failureReason: "QR closed before it was paid" },
+      select: PAYMENT_SELECT,
+    });
+
+    await this.audit.record({
+      actor: user,
+      action: "PAYMENT_QR_CLOSED",
+      entity: "Payment",
+      entityId: payment.id,
+      after: { qrId: payment.gatewayQrId },
+      ...ctx,
+    });
+
+    return { ...cancelled, closed: true, paid: false };
   }
 
   /**
@@ -429,20 +599,53 @@ export class PaymentsService {
 
     const orderId = entity.order_id as string | undefined;
     const paymentId = entity.id as string | undefined;
-    if (!orderId || !paymentId) return { handled: false, reason: "no payment entity on the event" };
+
+    /**
+     * A QR payment identifies itself by the code, not by an order.
+     *
+     * `qr_code.credited` carries the payment under `payload.payment.entity`
+     * like every other event, but that payment has no `order_id` — there was
+     * never an order, because the driver paid from their own UPI app rather
+     * than through a checkout we opened. The only thing tying it back to us is
+     * the QR's own id, alongside it at `payload.qr_code.entity.id`.
+     *
+     * This used to fall out at the `!orderId` guard below and be dropped as
+     * "no payment entity", which is how a paid fare would have stayed PENDING
+     * for ever.
+     */
+    const qrId = (
+      (event.payload as Record<string, Record<string, Record<string, unknown>>> | undefined)
+        ?.qr_code?.entity as Record<string, unknown> | undefined
+    )?.id as string | undefined;
+
+    if (!paymentId || (!orderId && !qrId)) {
+      return { handled: false, reason: "no payment entity on the event" };
+    }
 
     const payment = await this.prisma.payment.findFirst({
-      where: { gatewayOrderId: orderId },
+      where: orderId ? { gatewayOrderId: orderId } : { gatewayQrId: qrId },
       select: { id: true, status: true, amount: true },
     });
     if (!payment) {
       // Not an error: the account may be shared, and events for other systems
       // are none of our business. Acknowledge so Razorpay stops retrying.
-      this.logger.warn(`Webhook for unknown order ${orderId} — acknowledged and ignored`);
-      return { handled: false, reason: "order not recognised" };
+      this.logger.warn(
+        `Webhook for unknown ${orderId ? `order ${orderId}` : `QR ${qrId}`} — acknowledged and ignored`,
+      );
+      return { handled: false, reason: orderId ? "order not recognised" : "QR not recognised" };
     }
 
-    if (type === "payment.captured") {
+    /**
+     * A credited QR is a captured payment by another name.
+     *
+     * Razorpay has already taken the money — a UPI collection is captured at
+     * the moment the driver authorises it in their own app — so this wants
+     * exactly what `payment.captured` wants: the same replay short-circuit,
+     * the same amount check, the same `capture()`. Only the event name
+     * differs, so the two share one branch rather than growing a second copy
+     * of the fraud check that would drift away from this one.
+     */
+    if (type === "payment.captured" || type === "qr_code.credited") {
       // A replay must short-circuit before doing anything at all. `capture()`
       // is idempotent on `Payment.status` too and would refuse to run its own
       // side effects twice regardless, but the amount-mismatch check and the

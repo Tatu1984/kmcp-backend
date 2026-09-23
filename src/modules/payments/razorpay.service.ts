@@ -36,6 +36,18 @@ export interface RazorpayPayment {
   error_description?: string;
 }
 
+export interface RazorpayQrCode {
+  id: string;
+  /** A hosted PNG. Rendered by the handset as an image; we generate nothing. */
+  image_url: string;
+  status: "active" | "closed";
+  payment_amount?: number;
+  close_by?: number;
+  payments_amount_received?: number;
+  payments_count_received?: number;
+  close_reason?: "on_demand" | "paid" | null;
+}
+
 @Injectable()
 export class RazorpayService {
   private readonly logger = new Logger(RazorpayService.name);
@@ -126,6 +138,65 @@ export class RazorpayService {
 
   fetchPayment(paymentId: string) {
     return this.call<RazorpayPayment>(`/payments/${paymentId}`);
+  }
+
+  /**
+   * A UPI QR for one exact fare, good once.
+   *
+   * `fixed_amount` with `payment_amount` is what makes the figure part of the
+   * code rather than something the driver types: their UPI app opens already
+   * showing the fare and will not let them send a different one. `single_use`
+   * closes the code the moment it is paid, so a photograph of an attendant's
+   * screen cannot be paid a second time by somebody else.
+   *
+   * `close_by` is required for a single-use code and Razorpay bounds it to
+   * between two minutes and two hours; anything longer is silently reduced to
+   * two hours. A parking fare is settled at the kerb in the next minute or
+   * two, so this is deliberately short — an abandoned code should stop being
+   * payable long before the driver has left the city.
+   *
+   * Nothing here generates an image. Razorpay hosts the PNG and returns its
+   * URL, which is why removing the QR-drawing libraries from the handsets cost
+   * this feature nothing.
+   */
+  createQrCode(
+    amountPaise: number,
+    description: string,
+    closeBy: Date,
+    notes: Record<string, string> = {},
+  ) {
+    return this.call<RazorpayQrCode>("/payments/qr_codes", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "upi_qr",
+        name: "KMCP parking",
+        usage: "single_use",
+        fixed_amount: true,
+        payment_amount: amountPaise,
+        description,
+        close_by: Math.floor(closeBy.getTime() / 1000),
+        notes,
+      }),
+    });
+  }
+
+  /** Stops a code being payable. Safe on a code that has already closed itself. */
+  closeQrCode(qrId: string) {
+    return this.call<RazorpayQrCode>(`/payments/qr_codes/${qrId}/close`, { method: "POST" });
+  }
+
+  /**
+   * What has actually been paid against a code.
+   *
+   * The webhook is the normal way a payment is learned about, and this is what
+   * stands in for it when there is no webhook to receive one — a development
+   * machine Razorpay cannot reach, or a delivery that is simply late while an
+   * attendant and a driver stand waiting at the car.
+   */
+  qrCodePayments(qrId: string) {
+    return this.call<{ count: number; items: RazorpayPayment[] }>(
+      `/payments/qr_codes/${qrId}/payments`,
+    );
   }
 
   refund(paymentId: string, amountPaise: number, notes: Record<string, string> = {}) {

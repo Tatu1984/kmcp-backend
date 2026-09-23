@@ -53,6 +53,11 @@ function makeService(overrides: Record<string, any> = {}) {
     isConfigured: true,
     keyId: "rzp_test_key",
     createOrder: vi.fn().mockResolvedValue({ id: "order_ABC", amount: 6490, currency: "INR" }),
+    createQrCode: vi
+      .fn()
+      .mockResolvedValue({ id: "qr_ABC", image_url: "https://rzp.io/i/qr_ABC", status: "active" }),
+    closeQrCode: vi.fn().mockResolvedValue({ id: "qr_ABC", status: "closed" }),
+    qrCodePayments: vi.fn().mockResolvedValue({ count: 0, items: [] }),
     refund: vi.fn().mockResolvedValue({ id: "rfnd_1", amount: 1000, status: "processed" }),
     verifyCheckoutSignature: vi.fn().mockReturnValue(overrides.signatureValid ?? true),
     verifyWebhookSignature: vi.fn().mockReturnValue(overrides.webhookValid ?? true),
@@ -127,7 +132,7 @@ describe("collecting payment", () => {
   it("leaves a gateway payment pending until the gateway confirms it", async () => {
     const { service, prisma, razorpay } = makeService();
     const result: any = await service.collect(
-      { ...CASH, mode: PaymentMode.UPI_QR } as any,
+      { ...CASH, mode: PaymentMode.UPI_INTENT } as any,
       USER as any,
       {},
     );
@@ -135,6 +140,38 @@ describe("collecting payment", () => {
     expect(razorpay.createOrder).toHaveBeenCalledWith(6490, "KMCP-AAA111", expect.any(Object));
     expect(prisma.payment.create.mock.calls[0][0].data.status).toBe(PaymentStatus.PENDING);
     expect(result.gatewayOrder.id).toBe("order_ABC");
+  });
+
+  /**
+   * UPI_QR is the one gateway mode with no order behind it. It used to fall
+   * through to `createOrder` like the rest, which produced a checkout nobody
+   * could open: the driver pays from their own UPI app, and the only thing
+   * tying that payment back to us is the QR's id.
+   */
+  it("collects a UPI QR against a code rather than an order", async () => {
+    const { service, prisma, razorpay } = makeService();
+    const result: any = await service.collect(
+      { ...CASH, mode: PaymentMode.UPI_QR } as any,
+      USER as any,
+      {},
+    );
+
+    expect(razorpay.createOrder).not.toHaveBeenCalled();
+    expect(razorpay.createQrCode).toHaveBeenCalledWith(
+      6490,
+      "Parking KMCP-AAA111",
+      expect.any(Date),
+      expect.any(Object),
+    );
+
+    const created = prisma.payment.create.mock.calls[0][0].data;
+    expect(created.status).toBe(PaymentStatus.PENDING);
+    expect(created.gatewayQrId).toBe("qr_ABC");
+    expect(created.gatewayOrderId).toBeUndefined();
+
+    // The fare is in the code, so the driver cannot send a different figure.
+    expect(result.qr).toMatchObject({ id: "qr_ABC", imageUrl: "https://rzp.io/i/qr_ABC", amount: 6490 });
+    expect(Date.parse(result.qr.expiresAt)).toBeGreaterThan(Date.now());
   });
 });
 
@@ -218,6 +255,48 @@ describe("the webhook", () => {
 
     const result = await service.handleWebhook("{}", "sig", EVENT(6490));
     expect(result).toMatchObject({ handled: true });
+  });
+
+  /**
+   * A QR payment carries no order, so the old `!orderId` guard dropped it as
+   * "no payment entity" — a fare the driver had genuinely paid would have sat
+   * PENDING for ever. The QR's own id is the only handle back to us.
+   */
+  it("captures a QR payment, which arrives with no order at all", async () => {
+    const { service, prisma } = makeService({
+      byOrder: { id: "pay_1", status: PaymentStatus.PENDING, amount: 6490 },
+    });
+    prisma.payment.findUnique = vi.fn().mockResolvedValue({ status: PaymentStatus.PENDING });
+
+    const result = await service.handleWebhook("{}", "sig", {
+      event: "qr_code.credited",
+      payload: {
+        payment: { entity: { id: "pay_rzp_9", amount: 6490 } },
+        qr_code: { entity: { id: "qr_ABC" } },
+      },
+    });
+
+    expect(result).toMatchObject({ handled: true });
+    // Found by the code, not by an order.
+    expect(prisma.payment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { gatewayQrId: "qr_ABC" } }),
+    );
+  });
+
+  it("refuses a QR paid for the wrong amount", async () => {
+    const { service } = makeService({
+      byOrder: { id: "pay_1", status: PaymentStatus.PENDING, amount: 6490 },
+    });
+
+    const result = await service.handleWebhook("{}", "sig", {
+      event: "qr_code.credited",
+      payload: {
+        payment: { entity: { id: "pay_rzp_9", amount: 100 } },
+        qr_code: { entity: { id: "qr_ABC" } },
+      },
+    });
+
+    expect(result).toMatchObject({ handled: false, reason: "amount mismatch" });
   });
 
   it("acknowledges an event for an order it does not recognise", async () => {
