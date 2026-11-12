@@ -20,6 +20,38 @@ const schema = z.object({
   OTP_TTL_SECONDS: z.coerce.number().default(300),
   OTP_MAX_ATTEMPTS: z.coerce.number().default(5),
 
+  /**
+   * Developer sign-in shortcuts: every emailed code is also returned in the
+   * response as `devCode`, and `000000` works as any staff password.
+   *
+   * Off unless set to exactly "true", and refused outright in production (see
+   * the refinement below). It used to hang off `NODE_ENV !== "production"`,
+   * which fails open — NODE_ENV defaults to "development", so a deployment that
+   * never set it handed a live code to anyone who asked for one.
+   */
+  AUTH_DEV_BYPASS: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
+  /**
+   * One fixed sign-in for app-store reviewers, who cannot read a real inbox.
+   *
+   * Signing in with `REVIEW_ACCOUNT_EMAIL` sends no mail and accepts only
+   * `REVIEW_ACCOUNT_CODE`. It covers the citizen sign-in and the attendant's
+   * emailed second step (an attendant account whose email is this address);
+   * the attendant's password is still checked. Both or neither.
+   */
+  REVIEW_ACCOUNT_EMAIL: z
+    .preprocess(
+      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      z.string().trim().toLowerCase().email().optional(),
+    ),
+  REVIEW_ACCOUNT_CODE: z
+    .preprocess(
+      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      z.string().regex(/^\d{6}$/, "REVIEW_ACCOUNT_CODE must be six digits").optional(),
+    ),
+
   S3_ENDPOINT: z.string().optional(),
   S3_REGION: z.string().default("auto"),
   S3_BUCKET: z.string().default("kmcp-media"),
@@ -128,6 +160,21 @@ const schema = z.object({
     .default("true")
     .transform((v) => v !== "false"),
 }).superRefine((env, ctx) => {
+  if (env.NODE_ENV === "production" && env.AUTH_DEV_BYPASS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["AUTH_DEV_BYPASS"],
+      message: "AUTH_DEV_BYPASS cannot be enabled in production",
+    });
+  }
+  if (Boolean(env.REVIEW_ACCOUNT_EMAIL) !== Boolean(env.REVIEW_ACCOUNT_CODE)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["REVIEW_ACCOUNT_CODE"],
+      message: "Set REVIEW_ACCOUNT_EMAIL and REVIEW_ACCOUNT_CODE together, or neither",
+    });
+  }
+
   // MEDIA_BACKEND defaults to "r2", and the R2/S3 media store throws at request
   // time if its credentials are absent — which would let a deploy boot green and
   // then silently report every camera OFFLINE (and 500 on ingest). Require the

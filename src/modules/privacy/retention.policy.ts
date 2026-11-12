@@ -76,7 +76,7 @@ export const RETENTION_CLASSES: RetentionClass[] = [
     label: "One-time passcodes",
     configKey: "retention.otpRequestDays",
     defaultDays: 7,
-    covers: "OtpRequest rows — a mobile number and the hash of a code sent to it.",
+    covers: "OtpRequest rows — an email address (or, on older rows, a mobile number) and the hash of a code sent to it.",
     basis:
       "The code expires in minutes. A week is long enough to investigate a disputed sign-in " +
       "and short enough that the table is never a list of who was trying to log in last month.",

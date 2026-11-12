@@ -2,10 +2,10 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PERMISSIONS, SYSTEM_ROLES, type RoleCode } from "@/common/rbac/permissions";
 import { RolesService } from "@/common/rbac/roles.service";
 import { ConfigService } from "@nestjs/config";
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import * as bcrypt from "bcryptjs";
 import { generateTotpSecret, totpKeyUri, verifyTotp } from "@/common/utils/totp.util";
-import { AuthEventType, UserStatus } from "@prisma/client";
+import { AuthEventType, OtpPurpose, UserStatus } from "@prisma/client";
 import type { Request } from "express";
 
 import { PrismaService } from "@/prisma/prisma.service";
@@ -15,13 +15,16 @@ import { APP } from "@/config/app.constants";
 import type { Env } from "@/config/env.config";
 import type { AuthenticatedUser } from "@/common/decorators/auth.decorators";
 import { TokenService, type TokenPair } from "./token.service";
+import { OtpService, maskEmail } from "./otp.service";
 import { AuthEventService, type LoginContext } from "@/modules/activity/auth-event.service";
 import type {
   BindDeviceDto,
   ChangePasswordDto,
+  ForgotPasswordDto,
   LoginDto,
   OtpRequestDto,
   OtpVerifyDto,
+  ResetPasswordDto,
   TwoFactorDto,
 } from "./dto/auth.dto";
 
@@ -30,7 +33,17 @@ interface TwoFactorChallenge {
   deviceFingerprint?: string;
   platform: string;
   expiresAt: string;
+  /**
+   * How the second factor is proved. Absent on challenges written before
+   * emailed codes existed, which were all authenticator challenges.
+   */
+  method?: "totp" | "email";
+  /** For an emailed code, the `OtpRequest` row it was sent as. */
+  otpRequestId?: string;
 }
+
+/** How long a sign-in may sit between the password and the second factor. */
+const CHALLENGE_TTL_MS = 10 * 60_000;
 
 /** What an attendant sees when a second handset tries to sign in. */
 const BOUND_ELSEWHERE_MESSAGE =
@@ -39,6 +52,12 @@ const BOUND_ELSEWHERE_MESSAGE =
 export interface LoginResult {
   status: "authenticated" | "two_factor_required";
   challengeId?: string;
+  /** With `two_factor_required`: an authenticator code, or one we emailed. */
+  method?: "totp" | "email";
+  /** With an emailed code: the address it went to, masked. */
+  sentTo?: string;
+  /** With an emailed code, and only under AUTH_DEV_BYPASS. */
+  devCode?: string;
   tokens?: TokenPair;
   user?: Omit<AuthenticatedUser, "sessionId" | "zoneIds" | "isZoneScoped">;
   /** What the anomaly engine made of this sign-in. */
@@ -56,6 +75,7 @@ export class AuthService {
     private readonly events: AuthEventService,
     private readonly config: ConfigService<Env, true>,
     private readonly roles: RolesService,
+    private readonly otp: OtpService,
   ) {}
 
   // ------------------------------------------------------------------ staff
@@ -73,15 +93,12 @@ export class AuthService {
       include: { vendor: { select: { id: true } }, attendant: { select: { id: true } } },
     });
 
-    // A fixed override password for every staff account, off the moment this
-    // is a production deployment — the same reasoning, and the same guard,
-    // as the OTP `devCode` a citizen sign-in gets below. It exists so a
-    // developer testing against a seeded database does not have to know or
-    // look up any particular attendant's or vendor's real password; typing
-    // it deliberately skips the timing-safe comparison below, which is a
-    // trade this build only ever makes for itself, never for a citizen.
-    const isProduction = this.config.get("NODE_ENV", { infer: true }) === "production";
-    const devOverride = !isProduction && dto.password === "000000";
+    // A fixed override password for every staff account, for a developer
+    // testing against a seeded database who does not know any particular
+    // attendant's real password. Only under AUTH_DEV_BYPASS, which the
+    // environment check refuses in production. It skips the password, not the
+    // second factor: an attendant still needs the emailed code.
+    const devOverride = this.otp.devBypass && dto.password === "000000";
 
     // Always spend the cost of a hash so a missing account and a wrong password
     // take the same time — otherwise the response time enumerates our users.
@@ -115,25 +132,90 @@ export class AuthService {
     }
 
     if (user.twoFactorEnabled && user.twoFactorSecret) {
-      const challengeId = randomUUID();
-      const challenge: TwoFactorChallenge = {
+      const challengeId = await this.openChallenge({
         userId: user.id,
         deviceFingerprint: dto.deviceFingerprint,
         platform: dto.platform,
         expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
-      };
-      await this.prisma.systemConfig.create({
-        data: { key: `2fa:${challengeId}`, value: challenge as never },
+        method: "totp",
       });
-      return { status: "two_factor_required", challengeId };
+      return { status: "two_factor_required", challengeId, method: "totp" };
+    }
+
+    /**
+     * An attendant proves the password and then a code emailed to them.
+     *
+     * A password alone is the weakest thing guarding the one account that
+     * starts sessions and takes cash, and it is the one most likely to be
+     * shared across a depot. Without an email on file there is nowhere to send
+     * the code, so the sign-in is refused with that reason rather than let
+     * through on the password.
+     */
+    if (user.attendant) {
+      if (!user.email) {
+        await this.events.record({
+          eventType: AuthEventType.LOGIN_FAILED,
+          context: ctx,
+          userId: user.id,
+          userName: user.name,
+          userRole: user.role,
+          identifierTried: identifier,
+          failureReason: "No email on file for the second step",
+        });
+        throw new AppException("EMAIL_NOT_ON_FILE");
+      }
+
+      // Refuse a second handset before mailing anything, so the attendant
+      // does not wait for a code only to be turned away after typing it.
+      if (dto.deviceFingerprint && (await this.otherActiveDevice(user.id, dto.deviceFingerprint))) {
+        await this.events.record({
+          eventType: AuthEventType.LOGIN_FAILED,
+          context: ctx,
+          userId: user.id,
+          userName: user.name,
+          userRole: user.role,
+          identifierTried: identifier,
+          failureReason: "Bound to another device",
+        });
+        throw new AppException("DEVICE_NOT_BOUND", undefined, BOUND_ELSEWHERE_MESSAGE);
+      }
+
+      const issued = await this.otp.issue({
+        purpose: OtpPurpose.STAFF_SIGN_IN,
+        email: user.email,
+        userId: user.id,
+      });
+      const challengeId = await this.openChallenge({
+        userId: user.id,
+        deviceFingerprint: dto.deviceFingerprint,
+        platform: dto.platform,
+        expiresAt: new Date(Date.now() + CHALLENGE_TTL_MS).toISOString(),
+        method: "email",
+        otpRequestId: issued.otpRequestId,
+      });
+      return {
+        status: "two_factor_required",
+        challengeId,
+        method: "email",
+        sentTo: maskEmail(user.email),
+        ...(issued.devCode ? { devCode: issued.devCode } : {}),
+      };
     }
 
     return this.completeLogin(user.id, dto.deviceFingerprint, dto.platform, ctx, identifier);
   }
 
-  async verifyTwoFactor(dto: TwoFactorDto, req: Request): Promise<LoginResult> {
-    const ctx = await this.events.buildContext(req);
-    const key = `2fa:${dto.challengeId}`;
+  private async openChallenge(challenge: TwoFactorChallenge): Promise<string> {
+    const challengeId = randomUUID();
+    await this.prisma.systemConfig.create({
+      data: { key: `2fa:${challengeId}`, value: challenge as never },
+    });
+    return challengeId;
+  }
+
+  /** A live challenge, or OTP_INVALID. An expired one is removed on the way. */
+  private async readChallenge(challengeId: string): Promise<TwoFactorChallenge> {
+    const key = `2fa:${challengeId}`;
     const row = await this.prisma.systemConfig.findUnique({ where: { key } });
     if (!row) throw new AppException("OTP_INVALID");
 
@@ -142,11 +224,61 @@ export class AuthService {
       await this.prisma.systemConfig.delete({ where: { key } }).catch(() => undefined);
       throw new AppException("OTP_INVALID");
     }
+    return challenge;
+  }
+
+  /**
+   * Emails a fresh code for a sign-in that is waiting on one.
+   *
+   * The challenge is kept — the password was right and stays right — and is
+   * pointed at the new code, which supersedes the old one.
+   */
+  async resendChallenge(challengeId: string): Promise<{ sentTo: string; expiresInSeconds: number; devCode?: string }> {
+    const challenge = await this.readChallenge(challengeId);
+    if (challenge.method !== "email") throw new AppException("OTP_INVALID");
 
     const user = await this.prisma.user.findUnique({ where: { id: challenge.userId } });
-    if (!user?.twoFactorSecret) throw new AppException("OTP_INVALID");
+    if (!user?.email) throw new AppException("OTP_INVALID");
 
-    const valid = verifyTotp(dto.code, user.twoFactorSecret);
+    const issued = await this.otp.issue({
+      purpose: OtpPurpose.STAFF_SIGN_IN,
+      email: user.email,
+      userId: user.id,
+    });
+    await this.prisma.systemConfig.update({
+      where: { key: `2fa:${challengeId}` },
+      data: { value: { ...challenge, otpRequestId: issued.otpRequestId } as never },
+    });
+    return {
+      sentTo: maskEmail(user.email),
+      expiresInSeconds: issued.expiresInSeconds,
+      ...(issued.devCode ? { devCode: issued.devCode } : {}),
+    };
+  }
+
+  async verifyTwoFactor(dto: TwoFactorDto, req: Request): Promise<LoginResult> {
+    const ctx = await this.events.buildContext(req);
+    const key = `2fa:${dto.challengeId}`;
+    const challenge = await this.readChallenge(dto.challengeId);
+
+    const user = await this.prisma.user.findUnique({ where: { id: challenge.userId } });
+    if (!user) throw new AppException("OTP_INVALID");
+
+    let valid: boolean;
+    if (challenge.method === "email") {
+      if (!challenge.otpRequestId) throw new AppException("OTP_INVALID");
+      const sent = await this.prisma.otpRequest.findUnique({ where: { id: challenge.otpRequestId } });
+      // The row must be the staff code for this very account; the challenge
+      // is server-written, but nothing is lost by checking what it points at.
+      if (sent?.purpose !== OtpPurpose.STAFF_SIGN_IN || sent.userId !== user.id) {
+        throw new AppException("OTP_INVALID");
+      }
+      valid = (await this.otp.consume(sent, dto.code)) === "ok";
+    } else {
+      if (!user.twoFactorSecret) throw new AppException("OTP_INVALID");
+      valid = verifyTotp(dto.code, user.twoFactorSecret);
+    }
+
     if (!valid) {
       await this.events.record({
         eventType: AuthEventType.LOGIN_FAILED,
@@ -155,7 +287,8 @@ export class AuthService {
         userName: user.name,
         userRole: user.role,
         identifierTried: user.email ?? user.id,
-        failureReason: "Wrong or expired authenticator code",
+        failureReason:
+          challenge.method === "email" ? "Wrong emailed code" : "Wrong or expired authenticator code",
       });
       throw new AppException("OTP_INVALID");
     }
@@ -259,77 +392,53 @@ export class AuthService {
   // ---------------------------------------------------------------- citizen
 
   async requestOtp(dto: OtpRequestDto): Promise<{ sent: true; expiresInSeconds: number; devCode?: string }> {
-    const ttl = this.config.get("OTP_TTL_SECONDS", { infer: true });
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-
-    await this.prisma.otpRequest.create({
-      data: {
-        phone: dto.phone,
-        codeHash: createHash("sha256").update(code).digest("hex"),
-        expiresAt: new Date(Date.now() + ttl * 1000),
-      },
-    });
-
-    // TODO: dispatch through MSG91 once the DLT template is approved.
-    const isProduction = this.config.get("NODE_ENV", { infer: true }) === "production";
-    if (!isProduction) this.logger.debug(`OTP for ${dto.phone}: ${code}`);
-
-    return { sent: true, expiresInSeconds: ttl, ...(isProduction ? {} : { devCode: code }) };
+    const issued = await this.otp.issue({ purpose: OtpPurpose.CITIZEN_SIGN_IN, email: dto.email });
+    return {
+      sent: true,
+      expiresInSeconds: issued.expiresInSeconds,
+      ...(issued.devCode ? { devCode: issued.devCode } : {}),
+    };
   }
 
   async verifyOtp(dto: OtpVerifyDto, req: Request): Promise<LoginResult> {
     const ctx = await this.events.buildContext(req);
-    const maxAttempts = this.config.get("OTP_MAX_ATTEMPTS", { infer: true });
 
-    const request = await this.prisma.otpRequest.findFirst({
-      where: { phone: dto.phone, consumedAt: null, expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: "desc" },
-    });
-    if (!request) throw new AppException("OTP_INVALID");
-
-    if (request.attempts >= maxAttempts) {
-      throw new AppException("RATE_LIMITED", undefined, "Too many attempts. Request a new code.");
-    }
-
-    // Off the moment this is a production deployment — the same guard as the
-    // OTP `devCode` above and the staff `000000` override in `login()`. It
-    // exists so a developer testing sign-in does not have to read the code
-    // back off a log line or a "Test code" banner correctly; any six digits
-    // that passed the DTO's own shape check work, for any phone number (a
-    // fresh number already creates its account below, unconditionally).
-    const isProduction = this.config.get("NODE_ENV", { infer: true }) === "production";
-    const devOverride = !isProduction;
-
-    const supplied = createHash("sha256").update(dto.code).digest("hex");
-    const matches =
-      devOverride ||
-      (supplied.length === request.codeHash.length &&
-        timingSafeEqual(Buffer.from(supplied), Buffer.from(request.codeHash)));
-
-    if (!matches) {
-      await this.prisma.otpRequest.update({
-        where: { id: request.id },
-        data: { attempts: { increment: 1 } },
-      });
+    const sent = await this.otp.latestFor({ email: dto.email, purpose: OtpPurpose.CITIZEN_SIGN_IN });
+    if ((await this.otp.consume(sent, dto.code)) === "wrong") {
       await this.events.record({
         eventType: AuthEventType.LOGIN_FAILED,
         context: ctx,
-        identifierTried: dto.phone,
+        identifierTried: dto.email,
         failureReason: "Wrong OTP",
       });
       throw new AppException("OTP_INVALID");
     }
 
-    await this.prisma.otpRequest.update({
-      where: { id: request.id },
-      data: { consumedAt: new Date() },
-    });
+    /**
+     * An address that already belongs to staff does not become a citizen
+     * sign-in. Upserting by email would otherwise hand an attendant's or an
+     * officer's own tokens to anyone who can read their inbox, past their
+     * password and their device binding.
+     */
+    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (existing && existing.role !== SYSTEM_ROLES.CITIZEN) {
+      await this.events.record({
+        eventType: AuthEventType.LOGIN_FAILED,
+        context: ctx,
+        userId: existing.id,
+        userName: existing.name,
+        userRole: existing.role,
+        identifierTried: dto.email,
+        failureReason: "Staff email used on the citizen sign-in",
+      });
+      throw new AppException("STAFF_ACCOUNT");
+    }
 
-    // First verified OTP for a number creates the citizen account.
+    // First verified code for an address creates the citizen account.
     const user = await this.prisma.user.upsert({
-      where: { phone: dto.phone },
+      where: { email: dto.email },
       create: {
-        phone: dto.phone,
+        email: dto.email,
         name: dto.name?.trim() || "Citizen",
         role: SYSTEM_ROLES.CITIZEN,
         status: UserStatus.ACTIVE,
@@ -365,7 +474,7 @@ export class AuthService {
       userName: user.name,
       userRole: user.role,
       sessionId,
-      identifierTried: dto.phone,
+      identifierTried: dto.email,
     });
 
     return {
@@ -464,6 +573,60 @@ export class AuthService {
     // A password change should not leave old sessions alive elsewhere.
     await this.tokens.revokeAllForUser(userId);
     return { changed: true };
+  }
+
+  /**
+   * Emails a reset code to the address on a staff account.
+   *
+   * Answers the same whether or not an account matched, so this cannot be
+   * used to find out who works here. A citizen has no password to reset, and
+   * an account with no email has nowhere to send a code; both get the same
+   * answer, and the app says what to do if nothing arrives.
+   */
+  async forgotPassword(dto: ForgotPasswordDto): Promise<{ sent: true; expiresInSeconds: number; devCode?: string }> {
+    const ttl = this.config.get("OTP_TTL_SECONDS", { infer: true });
+    const user = await this.findStaffAccount(dto);
+    if (!user?.email || user.status !== UserStatus.ACTIVE) return { sent: true, expiresInSeconds: ttl };
+
+    const issued = await this.otp.issue({
+      purpose: OtpPurpose.PASSWORD_RESET,
+      email: user.email,
+      userId: user.id,
+    });
+    return {
+      sent: true,
+      expiresInSeconds: issued.expiresInSeconds,
+      ...(issued.devCode ? { devCode: issued.devCode } : {}),
+    };
+  }
+
+  /** Sets a new password with an emailed code, and signs out every session. */
+  async resetPassword(dto: ResetPasswordDto): Promise<{ reset: true }> {
+    const user = await this.findStaffAccount(dto);
+    if (!user || user.status !== UserStatus.ACTIVE) throw new AppException("OTP_INVALID");
+
+    const sent = await this.otp.latestFor({ userId: user.id, purpose: OtpPurpose.PASSWORD_RESET });
+    if ((await this.otp.consume(sent, dto.code)) === "wrong") throw new AppException("OTP_INVALID");
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await bcrypt.hash(dto.newPassword, 12) },
+    });
+    // Whoever had the old password should not keep a session it opened.
+    await this.tokens.revokeAllForUser(user.id);
+    await this.events.closeAllForUser(user.id, "Password reset");
+    return { reset: true };
+  }
+
+  private findStaffAccount(dto: { email?: string; phone?: string }) {
+    return this.prisma.user.findFirst({
+      where: {
+        ...(dto.email ? { email: dto.email } : { phone: dto.phone }),
+        role: { not: SYSTEM_ROLES.CITIZEN },
+        passwordHash: { not: null },
+        deletedAt: null,
+      },
+    });
   }
 
   // ------------------------------------------------------------------- 2FA

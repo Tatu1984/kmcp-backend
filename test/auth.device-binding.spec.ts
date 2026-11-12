@@ -50,6 +50,7 @@ function makeService(user: Record<string, any>, activeDevices: { fingerprint: st
     user: {
       findFirst: vi.fn().mockResolvedValue(user),
       findUniqueOrThrow: vi.fn().mockResolvedValue(user),
+      findUnique: vi.fn().mockResolvedValue(user),
       update: vi.fn().mockResolvedValue(user),
     },
     device: {
@@ -62,8 +63,19 @@ function makeService(user: Record<string, any>, activeDevices: { fingerprint: st
       }),
       upsert: vi.fn(async ({ create }: any) => ({ id: "dev_new", ...create })),
     },
-    systemConfig: { create: vi.fn() },
+    // Challenges are held in memory, the way the table would hold them.
+    systemConfig: {
+      create: vi.fn(async ({ data }: any) => challenges.set(data.key, data.value)),
+      findUnique: vi.fn(async ({ where }: any) =>
+        challenges.has(where.key) ? { key: where.key, value: challenges.get(where.key) } : null,
+      ),
+      delete: vi.fn(async ({ where }: any) => challenges.delete(where.key)),
+    },
+    otpRequest: {
+      findUnique: vi.fn(async () => ({ id: "otp_1", purpose: "STAFF_SIGN_IN", userId: user.id })),
+    },
   };
+  const challenges = new Map<string, unknown>();
 
   const tokens = {
     issue: vi.fn().mockResolvedValue({ accessToken: "access", refreshToken: "refresh" }),
@@ -78,6 +90,12 @@ function makeService(user: Record<string, any>, activeDevices: { fingerprint: st
   };
   const config = { get: vi.fn().mockReturnValue("test") };
   const roles = { get: vi.fn() };
+  // Every emailed code is "123456"; the real checks live in OtpService.
+  const otp = {
+    devBypass: false,
+    issue: vi.fn().mockResolvedValue({ otpRequestId: "otp_1", expiresInSeconds: 300 }),
+    consume: vi.fn(async (_row: unknown, code: string) => (code === "123456" ? "ok" : "wrong")),
+  };
 
   const service = new AuthService(
     prisma as any,
@@ -86,13 +104,28 @@ function makeService(user: Record<string, any>, activeDevices: { fingerprint: st
     events as any,
     config as any,
     roles as any,
+    otp as any,
   );
-  return { service, prisma, tokens, events };
+  return { service, prisma, tokens, events, otp };
 }
 
 function login(service: AuthService, email: string, deviceFingerprint?: string) {
   return service.login(
     { email, password: PASSWORD, platform: "android", deviceFingerprint } as any,
+    { header: () => undefined } as any,
+  );
+}
+
+/**
+ * An attendant's whole sign-in: the password, then the emailed code. Anyone
+ * else is signed in by the password alone, so this returns that answer as is.
+ */
+async function signIn(service: AuthService, email: string, deviceFingerprint?: string) {
+  const first = await login(service, email, deviceFingerprint);
+  if (first.status !== "two_factor_required") return first;
+  expect(first.method).toBe("email");
+  return service.verifyTwoFactor(
+    { challengeId: first.challengeId!, code: "123456" },
     { header: () => undefined } as any,
   );
 }
@@ -106,7 +139,7 @@ describe("attendant device binding at login", () => {
   it("binds the handset on the first sign-in", async () => {
     const { service, prisma, tokens } = makeService(ATTENDANT);
 
-    const result = await login(service, ATTENDANT.email, "phone-one-fingerprint");
+    const result = await signIn(service, ATTENDANT.email, "phone-one-fingerprint");
 
     expect(result.status).toBe("authenticated");
     expect(prisma.device.upsert).toHaveBeenCalledWith(
@@ -120,7 +153,7 @@ describe("attendant device binding at login", () => {
   it("lets the bound handset sign in again", async () => {
     const { service, prisma, tokens } = makeService(ATTENDANT, [{ fingerprint: "phone-one-fingerprint" }]);
 
-    const result = await login(service, ATTENDANT.email, "phone-one-fingerprint");
+    const result = await signIn(service, ATTENDANT.email, "phone-one-fingerprint");
 
     expect(result.status).toBe("authenticated");
     expect(prisma.device.upsert).toHaveBeenCalledTimes(1);
@@ -128,11 +161,13 @@ describe("attendant device binding at login", () => {
   });
 
   it("refuses a second handset while the first is still bound", async () => {
-    const { service, prisma, tokens, events } = makeService(ATTENDANT, [{ fingerprint: "phone-one-fingerprint" }]);
+    const { service, prisma, tokens, events, otp } = makeService(ATTENDANT, [{ fingerprint: "phone-one-fingerprint" }]);
 
     await expectRefusal(login(service, ATTENDANT.email, "phone-two-fingerprint"), "DEVICE_NOT_BOUND");
 
-    // The whole point: a refused sign-in binds nothing and issues nothing.
+    // The whole point: a refused sign-in binds nothing and issues nothing —
+    // and is refused at the password, before a code is mailed for nothing.
+    expect(otp.issue).not.toHaveBeenCalled();
     expect(prisma.device.upsert).not.toHaveBeenCalled();
     expect(tokens.issue).not.toHaveBeenCalled();
     expect(events.openSession).not.toHaveBeenCalled();
@@ -151,7 +186,7 @@ describe("attendant device binding at login", () => {
     // rule's point of view there is no active device at all.
     const { service, prisma } = makeService(ATTENDANT, []);
 
-    const result = await login(service, ATTENDANT.email, "phone-two-fingerprint");
+    const result = await signIn(service, ATTENDANT.email, "phone-two-fingerprint");
 
     expect(result.status).toBe("authenticated");
     expect(prisma.device.upsert).toHaveBeenCalledWith(
@@ -185,5 +220,46 @@ describe("attendant device binding at login", () => {
     expect(withFingerprint.status).toBe("authenticated");
     expect(prisma.device.findFirst).not.toHaveBeenCalled();
     expect(tokens.issue).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("the attendant's emailed second step", () => {
+  it("issues no tokens on the password alone", async () => {
+    const { service, tokens, otp } = makeService(ATTENDANT);
+
+    const result = await login(service, ATTENDANT.email, "phone-one-fingerprint");
+
+    expect(result).toMatchObject({ status: "two_factor_required", method: "email" });
+    expect(result.sentTo).toBe("r•••@example.com");
+    expect(result.tokens).toBeUndefined();
+    expect(otp.issue).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: "STAFF_SIGN_IN", email: ATTENDANT.email, userId: "usr_att" }),
+    );
+    expect(tokens.issue).not.toHaveBeenCalled();
+  });
+
+  it("refuses a wrong code and records why", async () => {
+    const { service, tokens, events } = makeService(ATTENDANT);
+    const first = await login(service, ATTENDANT.email, "phone-one-fingerprint");
+
+    await expectRefusal(
+      service.verifyTwoFactor(
+        { challengeId: first.challengeId!, code: "000000" },
+        { header: () => undefined } as any,
+      ),
+      "OTP_INVALID",
+    );
+    expect(tokens.issue).not.toHaveBeenCalled();
+    expect(events.record).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: AuthEventType.LOGIN_FAILED, failureReason: "Wrong emailed code" }),
+    );
+  });
+
+  it("refuses an attendant with no email on file rather than skip the step", async () => {
+    const { service, tokens, otp } = makeService({ ...ATTENDANT, email: null });
+
+    await expectRefusal(login(service, ATTENDANT.phone, "phone-one-fingerprint"), "EMAIL_NOT_ON_FILE");
+    expect(otp.issue).not.toHaveBeenCalled();
+    expect(tokens.issue).not.toHaveBeenCalled();
   });
 });

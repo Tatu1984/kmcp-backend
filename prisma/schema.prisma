@@ -1259,16 +1259,31 @@ model ReportSchedule {
   @@index([ownerId, createdAt])
 }
 
+/// What a one-time code was issued for. A code is only ever accepted for the
+/// purpose it was sent for, so a sign-in code cannot reset a password.
+enum OtpPurpose {
+  CITIZEN_SIGN_IN
+  STAFF_SIGN_IN
+  PASSWORD_RESET
+}
+
 model OtpRequest {
-  id         String    @id @default(cuid())
-  phone      String
+  id         String     @id @default(cuid())
+  purpose    OtpPurpose @default(CITIZEN_SIGN_IN)
+  /// Rows from the SMS era carry a phone; every code sent now goes by email.
+  phone      String?
+  email      String?
+  /// Set for staff codes, which belong to an existing account.
+  userId     String?
   codeHash   String
-  attempts   Int       @default(0)
+  attempts   Int        @default(0)
   expiresAt  DateTime
   consumedAt DateTime?
-  createdAt  DateTime  @default(now())
+  createdAt  DateTime   @default(now())
 
   @@index([phone, createdAt])
+  @@index([email, purpose, createdAt])
+  @@index([userId, purpose, createdAt])
 }
 
 /// How a vendor handed the money over.

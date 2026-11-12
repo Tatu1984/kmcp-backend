@@ -30,6 +30,8 @@ import { WhatsAppCloudProvider } from "./providers/whatsapp-cloud.provider";
     WhatsAppCloudProvider,
     ResendEmailProvider,
   ],
-  exports: [MessagingService],
+  // The registry too, for sign-in codes: those are sent once, inside the
+  // request that asked for them, and never belong in the delivery log.
+  exports: [MessagingService, ProviderRegistry],
 })
 export class MessagingModule {}

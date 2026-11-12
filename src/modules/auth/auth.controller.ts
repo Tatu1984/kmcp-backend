@@ -16,18 +16,24 @@ import { AuthService } from "./auth.service";
 import {
   BindDeviceSchema,
   ChangePasswordSchema,
+  ForgotPasswordSchema,
   LoginSchema,
   OtpRequestSchema,
   OtpVerifySchema,
   RefreshSchema,
+  ResendChallengeSchema,
+  ResetPasswordSchema,
   TwoFactorSchema,
   VerifyTotpSchema,
   type BindDeviceDto,
   type ChangePasswordDto,
+  type ForgotPasswordDto,
   type LoginDto,
   type OtpRequestDto,
   type OtpVerifyDto,
   type RefreshDto,
+  type ResendChallengeDto,
+  type ResetPasswordDto,
   type TwoFactorDto,
   type VerifyTotpDto,
 } from "./dto/auth.dto";
@@ -53,17 +59,52 @@ export class AuthController {
   @Public()
   @Throttle({ strict: { ttl: 60_000, limit: 10 } })
   @Post("two-factor/verify")
-  @ApiOperation({ summary: "Complete sign-in with a 6-digit authenticator code" })
+  @ApiOperation({
+    summary: "Complete sign-in with a 6-digit code",
+    description:
+      "The code from an authenticator app, or — for an attendant — the one emailed to the " +
+      "address on the account. The login response's `method` says which.",
+  })
   verifyTwoFactor(@Body(zodPipe(TwoFactorSchema)) dto: TwoFactorDto, @Req() req: Request) {
     return this.auth.verifyTwoFactor(dto, req);
   }
 
   @Public()
   @Throttle({ strict: { ttl: 300_000, limit: 5 } })
+  @Post("two-factor/resend")
+  @ApiOperation({ summary: "Email a fresh code for a sign-in waiting on an emailed code" })
+  resendTwoFactor(@Body(zodPipe(ResendChallengeSchema)) dto: ResendChallengeDto) {
+    return this.auth.resendChallenge(dto.challengeId);
+  }
+
+  @Public()
+  @Throttle({ strict: { ttl: 300_000, limit: 5 } })
+  @Post("password/forgot")
+  @ApiOperation({
+    summary: "Email a password reset code to a staff account",
+    description: "Answers the same whether or not an account matched.",
+  })
+  forgotPassword(@Body(zodPipe(ForgotPasswordSchema)) dto: ForgotPasswordDto) {
+    return this.auth.forgotPassword(dto);
+  }
+
+  @Public()
+  @Throttle({ strict: { ttl: 300_000, limit: 10 } })
+  @Post("password/reset")
+  @ApiOperation({
+    summary: "Choose a new password with an emailed reset code",
+    description: "Signs out every session on the account.",
+  })
+  resetPassword(@Body(zodPipe(ResetPasswordSchema)) dto: ResetPasswordDto) {
+    return this.auth.resetPassword(dto);
+  }
+
+  @Public()
+  @Throttle({ strict: { ttl: 300_000, limit: 5 } })
   @Post("otp/request")
   @ApiOperation({
-    summary: "Send a login OTP to a citizen's mobile",
-    description: "Outside production the code is returned as `devCode` so the flow is testable.",
+    summary: "Email a citizen a six-digit sign-in code",
+    description: "With AUTH_DEV_BYPASS (never in production) the code is also returned as `devCode`.",
   })
   requestOtp(@Body(zodPipe(OtpRequestSchema)) dto: OtpRequestDto) {
     return this.auth.requestOtp(dto);

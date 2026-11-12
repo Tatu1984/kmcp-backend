@@ -699,6 +699,7 @@ describe("what GET /auth/me tells the caller", () => {
       {} as never,
       {} as never,
       seededRolesService(),
+      {} as never,
     );
     return { service, user: principal(role) };
   }

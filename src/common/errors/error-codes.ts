@@ -17,6 +17,11 @@ export const ERROR_CODES = {
   FORBIDDEN: { status: 403, message: "You do not have permission to do that." },
   DEVICE_NOT_BOUND: { status: 403, message: "This device is not registered to your account." },
   ACCOUNT_SUSPENDED: { status: 403, message: "This account is suspended." },
+  EMAIL_NOT_ON_FILE: {
+    status: 403,
+    message: "There is no email address on this account. Ask your supervisor to add one.",
+  },
+  STAFF_ACCOUNT: { status: 403, message: "This email belongs to a staff account. Sign in with the staff app." },
 
   NOT_FOUND: { status: 404, message: "We could not find that." },
 
