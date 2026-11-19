@@ -32,6 +32,14 @@ const IN_FLIGHT: SessionStatus[] = [
 
 const OPEN_INCIDENT: IncidentStatus[] = [IncidentStatus.OPEN, IncidentStatus.IN_PROGRESS];
 
+/** `erasureBlockers`, said to the citizen whose account it is. */
+const OWN_BLOCKERS: Record<string, string> = {
+  sessions: "a parking session is still active or under dispute",
+  incidents: "a complaint you raised is still open",
+  payments: "a payment has not gone through yet",
+  passes: "you have a pass that is still valid",
+};
+
 /** The name an erased account carries. Not a person's name, and not blank. */
 const ERASED_NAME = "Erased citizen";
 
@@ -506,6 +514,39 @@ export class SubjectRightsService {
     });
 
     return result;
+  }
+
+  /**
+   * A citizen deleting their own account from the app.
+   *
+   * The same erasure an officer runs, not a lighter one: the app store rules
+   * that require this button also require that it actually remove the data,
+   * and there is one definition here of what removing it means. The audit row
+   * names the citizen as the actor. Signing out needs no extra step — the
+   * erased account is marked deleted, and both the request guard and token
+   * refresh refuse a deleted account.
+   */
+  async eraseOwnAccount(user: AuthenticatedUser, ctx: Ctx) {
+    try {
+      return await this.erase(
+        user.id,
+        { reason: "Deleted by the account holder in the app", confirmCitizenId: user.id },
+        user,
+        ctx,
+      );
+    } catch (error) {
+      // The blockers are worded for an officer reading them down a telephone.
+      // Said to the citizen, they are about "you".
+      if (error instanceof AppException && error.code === "VALIDATION_FAILED" && error.details?.length) {
+        const reasons = error.details.map((d) => OWN_BLOCKERS[d.field] ?? d.issue);
+        throw new AppException(
+          "VALIDATION_FAILED",
+          error.details,
+          `Your account can't be deleted yet: ${reasons.join("; ")}. Try again once that is settled.`,
+        );
+      }
+      throw error;
+    }
   }
 
   /**

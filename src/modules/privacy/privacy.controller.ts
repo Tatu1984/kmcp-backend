@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { SYSTEM_ROLES } from "@/common/rbac/permissions";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 
 import { zodPipe } from "@/common/pipes/zod-validation.pipe";
@@ -8,6 +9,7 @@ import {
   CurrentUser,
   RequestId,
   RequirePermissions,
+  Roles,
   type AuthenticatedUser,
 } from "@/common/decorators/auth.decorators";
 import { RetentionService } from "./retention.service";
@@ -185,6 +187,23 @@ export class PrivacyController {
   @ApiOperation({ summary: "Your own consent record" })
   ownConsents(@CurrentUser() user: AuthenticatedUser) {
     return this.consent.history(user.id);
+  }
+
+  @Roles(SYSTEM_ROLES.CITIZEN)
+  @Delete("account")
+  @ApiOperation({
+    summary: "Delete your own citizen account",
+    description:
+      "The same erasure an officer runs: identifiers, vehicles, devices and evidence go; " +
+      "sessions and payments are kept, identifying nobody. Signs the account out everywhere. " +
+      "Refused while a session, payment, complaint or pass is still open.",
+  })
+  deleteOwnAccount(
+    @CurrentUser() user: AuthenticatedUser,
+    @ClientInfo() info: { ip?: string; userAgent?: string },
+    @RequestId() requestId: string,
+  ) {
+    return this.rights.eraseOwnAccount(user, { ...info, requestId });
   }
 
   @Post("consents")

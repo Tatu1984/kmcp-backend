@@ -336,3 +336,37 @@ describe("passes that are no longer live", () => {
     expect(PassStatus.EXPIRED).toBe("EXPIRED");
   });
 });
+
+describe("a citizen deleting their own account", () => {
+  const citizen = { id: "usr_cit", role: "CITIZEN" } as never;
+  const ctx = { requestId: "req_1" };
+
+  it("runs the same erasure against their own id, with themselves as the actor", async () => {
+    const service = new SubjectRightsService({} as never, {} as never, {} as never);
+    const erase = vi.spyOn(service, "erase").mockResolvedValue({ erased: true } as never);
+
+    await expect(service.eraseOwnAccount(citizen, ctx)).resolves.toEqual({ erased: true });
+    expect(erase).toHaveBeenCalledWith(
+      "usr_cit",
+      expect.objectContaining({ confirmCitizenId: "usr_cit" }),
+      citizen,
+      ctx,
+    );
+  });
+
+  it("tells them in their own terms what is still open", async () => {
+    const service = new SubjectRightsService({} as never, {} as never, {} as never);
+    vi.spyOn(service, "erase").mockRejectedValue(
+      new AppException("VALIDATION_FAILED", [
+        { field: "sessions", issue: "1 parking session(s) are still active, in overstay or under dispute" },
+        { field: "passes", issue: "1 pass(es) are still valid — cancel or let them expire first" },
+      ]),
+    );
+
+    const refusal = await service.eraseOwnAccount(citizen, ctx).catch((e: AppException) => e);
+    expect(refusal).toBeInstanceOf(AppException);
+    expect((refusal as AppException).message).toContain("a parking session is still active");
+    expect((refusal as AppException).message).toContain("you have a pass that is still valid");
+    expect((refusal as AppException).details).toHaveLength(2);
+  });
+});
